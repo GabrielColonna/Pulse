@@ -1,0 +1,11 @@
+Date,Description,Amount,Type,Parent Category,Category
+03/01/2026,Paycheck,2300,income,Income,Paycheck/Salary
+03/02/2026,Costco Groceries,145.72,expense,Expenses,Groceries
+03/03/2026,Shell Gas,42.10,expense,Car,Gas
+03/04/2026,Dinner Out,38.50,expense,Personal Expenses,Food
+03/05/2026,Resell Shoes,120,income,Income,Reselling
+03/06/2026,Gym Membership,39.99,expense,Expenses,Memberships
+03/07/2026,Haircut,30,expense,Personal Expenses,Haircut
+03/08/2026,Car Insurance,175,expense,Expenses,Insurance
+03/09/2026,Date Night,62.40,expense,Girlfriend,Dates
+03/10/2026,Financial Aid Disbursement,850,income,Income,Financial Aid

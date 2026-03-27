@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget Pulse Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-orb orb-1" aria-hidden="true"></div>
+  <div class="bg-orb orb-2" aria-hidden="true"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <!-- <p class="eyebrow">Budget System</p> -->
+        <h1>Pulse</h1>
+        <p class="sync-note">Data is saved to the project database so this dashboard stays prefilled every time.</p>
+      </div>
+      <div class="topbar-tools">
+        <div class="topbar-actions">
+          <button id="importButton" class="ghost-btn" type="button">Import CSV/Excel</button>
+          <button id="exportButton" class="ghost-btn" type="button">Export Excel</button>
+          <button id="clearButton" class="danger-btn" type="button">Clear Data</button>
+        </div>
+        <input id="excelFile" class="file-input-hidden" type="file" accept=".csv,.xlsx,.xls" />
+        <p id="importMessage" class="form-message" role="status" aria-live="polite"></p>
+      </div>
+    </header>
+
+    <main class="layout-grid">
+      <section class="dashboard-panel" aria-label="Budget summary and analytics">
+        <div class="year-metrics-section">
+          <h2 class="section-heading">Year-To-Date Summary</h2>
+          <div class="year-metrics-grid">
+            <article class="year-metric-card">
+              <p>Year Net</p>
+              <h3 id="yearNetValue">$0.00</h3>
+            </article>
+            <article class="year-metric-card">
+              <p>Year Income</p>
+              <h3 id="yearIncomeValue">$0.00</h3>
+            </article>
+            <article class="year-metric-card">
+              <p>Year Spending</p>
+              <h3 id="yearSpendingValue">$0.00</h3>
+            </article>
+            <article class="year-metric-card">
+              <p>Year Savings Rate</p>
+              <h3 id="yearSavingsRateValue">0%</h3>
+            </article>
+          </div>
+        </div>
+
+        <div class="mtd-metrics-section">
+          <h2 class="section-heading">Month-To-Date Summary</h2>
+          <div class="kpi-grid">
+            <article class="kpi-card">
+              <p>Net This Month</p>
+              <h2 id="balanceValue">$0.00</h2>
+            </article>
+            <article class="kpi-card">
+              <p>Income This Month</p>
+              <h2 id="incomeValue">$0.00</h2>
+            </article>
+            <article class="kpi-card">
+              <p>Spending This Month</p>
+              <h2 id="expenseValue">$0.00</h2>
+            </article>
+            <article class="kpi-card">
+              <p>Savings Rate</p>
+              <h2 id="savingsRateValue">0%</h2>
+            </article>
+          </div>
+        </div>
+
+        <div class="panel-row">
+          <div class="chart-grid">
+            <article class="panel-card">
+              <div class="panel-heading">
+                <h3>Parent Category Totals</h3>
+                <p>Hover For Subcategory Totals</p>
+              </div>
+              <div class="chart-wrap">
+                <canvas id="expenseCategoryChart" aria-label="Expense categories chart"></canvas>
+              </div>
+            </article>
+
+            <article class="panel-card monthly-snapshot-card">
+              <div class="panel-heading">
+                <h3>Monthly Snapshot</h3>
+                <p>Spend And Net By Month</p>
+              </div>
+              <div class="month-controls">
+                <button id="prevMonthButton" class="ghost-btn" type="button" aria-label="Previous Month">&larr;</button>
+                <p id="activeMonthLabel" class="month-label">Current Month</p>
+                <button id="nextMonthButton" class="ghost-btn" type="button" aria-label="Next Month">&rarr;</button>
+              </div>
+              <div class="month-metrics">
+                <article class="month-metric">
+                  <p>This Month Spending</p>
+                  <h3 id="monthSpendingValue">$0.00</h3>
+                </article>
+                <article id="netMetricCard" class="month-metric">
+                  <p>Net Earning / Loss</p>
+                  <h3 id="monthNetValue">$0.00</h3>
+                </article>
+              </div>
+              <button id="openMonthLogButton" class="primary-btn" type="button">Open Monthly Log</button>
+            </article>
+          </div>
+
+          <article class="panel-card">
+            <div class="panel-heading">
+              <h3>Category Cards</h3>
+              <p>Totals For Selected Month</p>
+            </div>
+            <div id="parentTotalsGrid" class="parent-totals-grid"></div>
+          </article>
+
+          <article class="panel-card">
+            <div class="panel-heading">
+              <h3>Recent Entries</h3>
+              <p>Latest 10 Transactions</p>
+            </div>
+            <ul id="recentEntries" class="recent-list"></ul>
+          </article>
+        </div>
+      </section>
+
+      <aside class="widget-panel" aria-label="Transaction input widget">
+        <article class="widget-card">
+          <h3>Quick Add</h3>
+          <p class="widget-subtitle">Type Naturally. The System Suggests Category For You.</p>
+
+          <form id="entryForm" novalidate>
+            <label>
+              Description
+              <input id="description" name="description" type="text" placeholder="ex: Walmart groceries" required />
+            </label>
+
+            <label>
+              Amount
+              <input id="amount" name="amount" type="number" step="0.01" placeholder="ex: 84.30" required />
+            </label>
+
+            <label>
+              Date
+              <input id="entryDate" name="entryDate" type="date" required />
+            </label>
+
+            <label>
+              Type
+              <select id="entryType" name="entryType">
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </label>
+
+            <label>
+              Category
+              <select id="parentCategorySelect" name="parentCategorySelect" required></select>
+            </label>
+
+            <label>
+              Subcategory
+              <select id="subcategorySelect" name="subcategorySelect" required></select>
+            </label>
+
+            <div class="form-actions">
+              <button id="submitButton" class="primary-btn" type="submit">Add Entry</button>
+              <button id="cancelEditButton" class="ghost-btn" type="button" hidden>Cancel Edit</button>
+            </div>
+            <p id="formMessage" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+        </article>
+      </aside>
+    </main>
+  </div>
+
+  <div id="monthLogModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="monthLogTitle">
+      <div class="modal-header">
+        <h3 id="monthLogTitle">Monthly Transaction Log</h3>
+        <button id="closeMonthLogButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p id="monthLogSubtitle" class="modal-subtitle">Transactions For Selected Month</p>
+      <div class="log-filters" aria-label="Transaction Log Filters">
+        <label class="log-filter-field">
+          Search
+          <input id="monthLogSearch" type="text" placeholder="Search description..." />
+        </label>
+        <label class="log-filter-field">
+          Type
+          <select id="monthLogTypeFilter">
+            <option value="all">All</option>
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+          </select>
+        </label>
+        <label class="log-filter-field">
+          Category
+          <select id="monthLogParentFilter">
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label class="log-filter-field">
+          Subcategory
+          <select id="monthLogSubcategoryFilter">
+            <option value="all">All</option>
+          </select>
+        </label>
+        <div class="log-filter-actions">
+          <button id="resetMonthLogFilters" class="ghost-btn" type="button">Reset Filters</button>
+        </div>
+      </div>
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Type</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="monthLogBody"></tbody>
+        </table>
+      </div>
+      <div id="monthLogTotals" class="modal-totals"></div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
