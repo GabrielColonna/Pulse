@@ -14,21 +14,49 @@
   <div class="bg-orb orb-2" aria-hidden="true"></div>
   <div class="app-shell">
     <header class="topbar">
-      <div>
+      <div class="topbar-brand">
         <!-- <p class="eyebrow">Budget System</p> -->
         <h1>Pulse</h1>
-        <p class="sync-note">Data is saved to the project database so this dashboard stays prefilled every time.</p>
+        <!-- <p class="sync-note">Your transactions are saved locally and load automatically each time you open Pulse.</p> -->
       </div>
-      <div class="topbar-tools">
-        <div class="topbar-actions">
-          <button id="importButton" class="ghost-btn" type="button">Import CSV/Excel</button>
-          <button id="exportButton" class="ghost-btn" type="button">Export Excel</button>
-          <button id="clearButton" class="danger-btn" type="button">Clear Data</button>
+
+      <nav class="topbar-nav" aria-label="Primary actions">
+        <div class="nav-menu">
+          <button class="ghost-btn nav-trigger" type="button">User</button>
+          <div class="nav-dropdown">
+            <button id="openUserProfileButton" class="ghost-btn" type="button">User Profile</button>
+            <button id="openSettingsButton" class="ghost-btn" type="button">Settings</button>
+          </div>
         </div>
-        <input id="excelFile" class="file-input-hidden" type="file" accept=".csv,.xlsx,.xls" />
-        <p id="importMessage" class="form-message" role="status" aria-live="polite"></p>
-      </div>
+
+        <div class="nav-menu">
+          <button class="ghost-btn nav-trigger" type="button">Trips</button>
+          <div class="nav-dropdown">
+            <button id="createTripButton" class="ghost-btn" type="button">Create Trip</button>
+            <button id="openTripSummaryButton" class="ghost-btn" type="button">Trip Summary</button>
+          </div>
+        </div>
+
+        <div class="nav-menu">
+          <button class="ghost-btn nav-trigger" type="button">Import / Export</button>
+          <div class="nav-dropdown">
+            <button id="importButton" class="ghost-btn" type="button">Import Data</button>
+            <button id="exportButton" class="ghost-btn" type="button">Export Data</button>
+            <button id="backupButton" class="ghost-btn" type="button">Backup Data</button>
+          </div>
+        </div>
+
+        <div class="nav-menu nav-danger">
+          <button class="danger-btn nav-trigger" type="button">Danger</button>
+          <div class="nav-dropdown">
+            <button id="clearButton" class="danger-btn" type="button">Clear Data</button>
+          </div>
+        </div>
+      </nav>
+
+      <input id="excelFile" class="file-input-hidden" type="file" accept=".csv,.xlsx,.xls" />
     </header>
+    <p id="importMessage" class="form-message topbar-message" role="status" aria-live="polite"></p>
 
     <main class="layout-grid">
       <section class="dashboard-panel" aria-label="Budget summary and analytics">
@@ -36,16 +64,16 @@
           <h2 class="section-heading">Year-To-Date Summary</h2>
           <div class="year-metrics-grid">
             <article class="year-metric-card">
-              <p>Year Net</p>
-              <h3 id="yearNetValue">$0.00</h3>
-            </article>
-            <article class="year-metric-card">
               <p>Year Income</p>
               <h3 id="yearIncomeValue">$0.00</h3>
             </article>
             <article class="year-metric-card">
               <p>Year Spending</p>
               <h3 id="yearSpendingValue">$0.00</h3>
+            </article>
+            <article class="year-metric-card">
+              <p>Year Net</p>
+              <h3 id="yearNetValue">$0.00</h3>
             </article>
             <article class="year-metric-card">
               <p>Year Savings Rate</p>
@@ -58,16 +86,16 @@
           <h2 class="section-heading">Month-To-Date Summary</h2>
           <div class="kpi-grid">
             <article class="kpi-card">
-              <p>Net This Month</p>
-              <h2 id="balanceValue">$0.00</h2>
-            </article>
-            <article class="kpi-card">
               <p>Income This Month</p>
               <h2 id="incomeValue">$0.00</h2>
             </article>
             <article class="kpi-card">
               <p>Spending This Month</p>
               <h2 id="expenseValue">$0.00</h2>
+            </article>
+            <article class="kpi-card">
+              <p>Net This Month</p>
+              <h2 id="balanceValue">$0.00</h2>
             </article>
             <article class="kpi-card">
               <p>Savings Rate</p>
@@ -128,10 +156,10 @@
             <ul id="recentEntries" class="recent-list"></ul>
           </article>
         </div>
-      </section>
+        </section>
 
-      <aside class="widget-panel" aria-label="Transaction input widget">
-        <article class="widget-card">
+      <aside class="workspace-tools" aria-label="App tools and quick entry">
+        <article class="widget-card widget-panel" aria-label="Transaction input widget">
           <h3>Quick Add</h3>
           <p class="widget-subtitle">Type Naturally. The System Suggests Category For You.</p>
 
@@ -168,6 +196,37 @@
               Subcategory
               <select id="subcategorySelect" name="subcategorySelect" required></select>
             </label>
+
+            <details class="optional-fields-accordion">
+              <summary>Optional Fields</summary>
+
+              <details class="trip-accordion">
+                <summary>Trip</summary>
+                <label class="trip-accordion-field">
+                  Select Trip
+                  <select id="tripSelect" name="tripSelect">
+                    <option value="">No Trip</option>
+                  </select>
+                </label>
+              </details>
+
+              <details class="recurrence-accordion">
+                <summary>Recurring / Future</summary>
+                <label class="trip-accordion-field">
+                  Frequency
+                  <select id="recurrenceFrequency" name="recurrenceFrequency">
+                    <option value="none">One-Time</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Every 2 Weeks</option>
+                  </select>
+                </label>
+                <label class="trip-accordion-field">
+                  Number Of Entries
+                  <input id="recurrenceCount" name="recurrenceCount" type="number" min="1" max="36" value="1" />
+                </label>
+              </details>
+            </details>
 
             <div class="form-actions">
               <button id="submitButton" class="primary-btn" type="submit">Add Entry</button>
@@ -226,12 +285,98 @@
               <th>Category</th>
               <th>Subcategory</th>
               <th>Amount</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="monthLogBody"></tbody>
         </table>
       </div>
       <div id="monthLogTotals" class="modal-totals"></div>
+    </section>
+  </div>
+
+  <div id="tripSummaryModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tripSummaryTitle">
+      <div class="modal-header">
+        <h3 id="tripSummaryTitle">Trip Summary</h3>
+        <button id="closeTripSummaryButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p id="tripSummarySubtitle" class="modal-subtitle">All Trip Transactions Across Months</p>
+      <div class="log-filters" aria-label="Trip Summary Filters">
+        <label class="log-filter-field">
+          Trip
+          <select id="tripSummaryTripFilter">
+            <option value="all">All Trips</option>
+          </select>
+        </label>
+      </div>
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Trip</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="tripSummaryBody"></tbody>
+        </table>
+      </div>
+      <div id="tripSummaryTotals" class="modal-totals"></div>
+    </section>
+  </div>
+
+  <div id="importPreviewModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="importPreviewTitle">
+      <div class="modal-header">
+        <h3 id="importPreviewTitle">Import Preview</h3>
+        <button id="closeImportPreviewButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p id="importPreviewSubtitle" class="modal-subtitle">Review Column Mapping And Rows Before Import</p>
+
+      <div id="importPreviewSummary" class="import-preview-summary"></div>
+
+      <div class="import-mapping-grid" aria-label="Import Mapping">
+        <label class="log-filter-field">Date<select id="importMapDate"></select></label>
+        <label class="log-filter-field">Description*<select id="importMapDescription"></select></label>
+        <label class="log-filter-field">Amount*<select id="importMapAmount"></select></label>
+        <label class="log-filter-field">Type<select id="importMapType"></select></label>
+        <label class="log-filter-field">Parent Category<select id="importMapParentCategory"></select></label>
+        <label class="log-filter-field">Category<select id="importMapCategory"></select></label>
+        <label class="log-filter-field">Trip<select id="importMapTrip"></select></label>
+      </div>
+
+      <label class="import-preview-checkbox">
+        <input id="importSkipDuplicates" type="checkbox" checked />
+        Skip Duplicate Transactions
+      </label>
+
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Type</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Trip</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="importPreviewBody"></tbody>
+        </table>
+      </div>
+
+      <div class="form-actions import-preview-actions">
+        <button id="confirmImportButton" class="primary-btn" type="button">Import Now</button>
+        <button id="cancelImportPreviewButton" class="ghost-btn" type="button">Cancel</button>
+      </div>
     </section>
   </div>
 

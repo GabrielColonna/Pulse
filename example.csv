@@ -1,11 +1,32 @@
 Date,Description,Amount,Type,Parent Category,Category
-03/01/2026,Paycheck,2300,income,Income,Paycheck/Salary
-03/02/2026,Costco Groceries,145.72,expense,Expenses,Groceries
-03/03/2026,Shell Gas,42.10,expense,Car,Gas
-03/04/2026,Dinner Out,38.50,expense,Personal Expenses,Food
-03/05/2026,Resell Shoes,120,income,Income,Reselling
-03/06/2026,Gym Membership,39.99,expense,Expenses,Memberships
-03/07/2026,Haircut,30,expense,Personal Expenses,Haircut
-03/08/2026,Car Insurance,175,expense,Expenses,Insurance
-03/09/2026,Date Night,62.40,expense,Girlfriend,Dates
-03/10/2026,Financial Aid Disbursement,850,income,Income,Financial Aid
+03/01/2026,Monthly Salary,2300,income,Income,Salary
+03/02/2026,Sportsbook Winnings,95,income,Income,Gambling
+03/03/2026,Marketplace Resell,140,income,Income,Reselling
+03/04/2026,Grant Deposit,850,income,Income,Financial Aid
+03/05/2026,Cashback Bonus,45,income,Income,Other Income
+03/06/2026,Gym Membership Fee,39.99,expense,Expenses,Memberships
+03/07/2026,Car Loan Payment,325,expense,Expenses,Car Payments
+03/08/2026,Auto Insurance Bill,175,expense,Expenses,Insurance
+03/09/2026,Weekly Groceries,142.5,expense,Expenses,Groceries
+03/10/2026,Broker Deposit,120,expense,Expenses,Investments
+03/11/2026,Failed Item Charge,27.15,expense,Expenses,Losses
+03/12/2026,Shell Fuel Stop,46.2,expense,Car,Gas
+03/13/2026,Oil Service,68,expense,Car,Oil Changes
+03/14/2026,Brake Repair,410,expense,Car,Repairs
+03/15/2026,Bridge Toll,9.5,expense,Car,Tolls
+03/16/2026,Downtown Parking,14,expense,Car,Parking
+03/17/2026,Car Registration,82,expense,Car,Other
+03/18/2026,Weekend Hotel,220,expense,Travel,Hotel
+03/19/2026,Flight Ticket,315,expense,Travel,Flights
+03/20/2026,Rental Car,96,expense,Travel,Rental
+03/21/2026,City Tour Pass,55,expense,Travel,Activities
+03/22/2026,Anniversary Gift,88,expense,Girlfriend,Gifts
+03/23/2026,Dinner Date,64.75,expense,Girlfriend,Dates
+03/24/2026,Flowers Surprise,24,expense,Girlfriend,Other
+03/25/2026,Restaurant Lunch,21.5,expense,Personal,Food
+03/26/2026,Movie Night,18,expense,Personal,Entertainment / Activities
+03/27/2026,Barber Visit,32,expense,Personal,Haircut
+03/28/2026,Soccer League Fee,70,expense,Personal,Soccer
+03/29/2026,PSN Subscription,15,expense,Personal,Gaming
+03/30/2026,Clothing Purchase,58.4,expense,Personal,Shopping
+03/31/2026,Toiletries Run,19.2,expense,Personal,Other

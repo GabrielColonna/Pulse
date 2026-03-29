@@ -12,6 +12,8 @@ const DB_PATH = path.join(__dirname, "budget.db");
 
 const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
+const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
+const importPreviewCache = new Map();
 
 app.use(express.json());
 app.use(express.static(__dirname));
@@ -22,12 +24,12 @@ const categoryModel = {
   income: [
     {
       name: "Income",
-      subcategories: ["Paycheck/Salary", "Gambling", "Reselling", "Financial Aid", "Other Income"]
+      subcategories: ["Salary", "Gambling", "Reselling", "Financial Aid", "Other Income"]
     }
   ],
   expense: [
     {
-      name: "Personal Expenses",
+      name: "Personal",
       subcategories: ["Food", "Entertainment / Activities", "Haircut", "Soccer", "Gaming", "Shopping", "Other"]
     },
     {
@@ -51,43 +53,169 @@ const categoryModel = {
 
 const classifyRules = {
   income: [
-    { parentCategory: "Income", category: "Paycheck/Salary", keywords: ["paycheck", "salary", "payroll", "wage"] },
-    { parentCategory: "Income", category: "Gambling", keywords: ["gamble", "bet", "casino"] },
-    { parentCategory: "Income", category: "Reselling", keywords: ["resell", "sold", "marketplace", "ebay"] },
-    { parentCategory: "Income", category: "Financial Aid", keywords: ["financial aid", "grant", "scholarship"] },
-    { parentCategory: "Income", category: "Other Income", keywords: ["income", "bonus", "refund", "gift"] }
+    {
+      parentCategory: "Income",
+      category: "Salary",
+      keywords: ["paycheck", "salary"]
+    },
+    {
+      parentCategory: "Income",
+      category: "Gambling",
+      keywords: ["gamble", "casino", "fliff", "underdog", "hard rock", "prize picks", "prizepicks"]
+    },
+    {
+      parentCategory: "Income",
+      category: "Reselling",
+      keywords: ["resell", "marketplace", "ebay", "jersey", "stockx"]
+    },
+    {
+      parentCategory: "Income",
+      category: "Financial Aid",
+      keywords: ["financial aid", "grant", "scholarship", "fafsa"]
+    },
+    {
+      parentCategory: "Income",
+      category: "Other Income",
+      keywords: ["bonus", "refund", "reimbursement", "cashback"]
+    }
   ],
   expense: [
-    { parentCategory: "Expenses", category: "Memberships", keywords: ["membership", "subscription", "gym"] },
-    { parentCategory: "Expenses", category: "Car Payments", keywords: ["car payment", "auto loan"] },
-    { parentCategory: "Expenses", category: "Insurance", keywords: ["insurance", "premium"] },
-    { parentCategory: "Expenses", category: "Groceries", keywords: ["grocery", "walmart", "costco", "aldi", "target"] },
-    { parentCategory: "Expenses", category: "Investments", keywords: ["investment", "broker", "stock", "crypto"] },
-    { parentCategory: "Expenses", category: "Losses", keywords: ["loss", "chargeback"] },
-    { parentCategory: "Car", category: "Gas", keywords: ["gas", "fuel", "shell", "chevron"] },
-    { parentCategory: "Car", category: "Oil Changes", keywords: ["oil"] },
-    { parentCategory: "Car", category: "Repairs", keywords: ["repair", "maintenance", "mechanic"] },
-    { parentCategory: "Car", category: "Tolls", keywords: ["toll"] },
-    { parentCategory: "Car", category: "Parking", keywords: ["parking", "meter"] },
-    { parentCategory: "Car", category: "Other", keywords: ["car wash", "registration", "dmv"] },
-    { parentCategory: "Travel", category: "Hotel", keywords: ["hotel", "airbnb"] },
-    { parentCategory: "Travel", category: "Flights", keywords: ["flight", "airfare"] },
-    { parentCategory: "Travel", category: "Rental", keywords: ["rental", "rent car"] },
-    { parentCategory: "Travel", category: "Activities", keywords: ["activity", "tour", "ticket"] },
-    { parentCategory: "Girlfriend", category: "Gifts", keywords: ["gift", "present"] },
-    { parentCategory: "Girlfriend", category: "Dates", keywords: ["date", "date night"] },
-    { parentCategory: "Girlfriend", category: "Other", keywords: ["gabby"] },
-    { parentCategory: "Personal Expenses", category: "Entertainment / Activities", keywords: ["entertainment", "movie", "netflix", "spotify", "activity"] },
-    { parentCategory: "Personal Expenses", category: "Food", keywords: ["food", "restaurant", "doordash", "ubereats", "eat"] },
-    { parentCategory: "Personal Expenses", category: "Haircut", keywords: ["haircut", "barber", "salon"] },
-    { parentCategory: "Personal Expenses", category: "Soccer", keywords: ["soccer", "cleats", "league"] },
-    { parentCategory: "Personal Expenses", category: "Gaming", keywords: ["psn", "playstation", "gaming", "sony"] },
-    { parentCategory: "Personal Expenses", category: "Shopping", keywords: ["shopping", "amazon", "mall", "clothes"] }
+    {
+      parentCategory: "Expenses",
+      category: "Memberships",
+      keywords: ["membership", "subscription", "gym", "icloud", "planet fitness", "coursera", "microsoft 365", "pf monthly", "annual fee"]
+    },
+    {
+      parentCategory: "Expenses",
+      category: "Car Payments",
+      keywords: ["car payment", "auto loan", "pay off car"]
+    },
+    {
+      parentCategory: "Expenses",
+      category: "Insurance",
+      keywords: ["insurance", "geico"]
+    },
+    {
+      parentCategory: "Expenses",
+      category: "Groceries",
+      keywords: ["grocery", "walmart", "costco", "aldi", "target", "publix", "trader joe", "walgreens", "xeela"]
+    },
+    {
+      parentCategory: "Expenses",
+      category: "Investments",
+      keywords: ["investment", "stock", "crypto", "savings", "wealthfront", "xrp"]
+    },
+    {
+      parentCategory: "Expenses",
+      category: "Losses",
+      keywords: ["loss", "chargeback", "doctor", "copay", "parking ticket", "parking citation"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Gas",
+      keywords: ["gas", "fuel", "shell", "chevron"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Oil Changes",
+      keywords: ["oil change", "tire kingdom"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Repairs",
+      keywords: ["repair", "maintenance", "mechanic", "car tow", "tow", "brake", "registration renewal"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Tolls",
+      keywords: ["toll", "tolls"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Parking",
+      keywords: ["parking"]
+    },
+    {
+      parentCategory: "Car",
+      category: "Other",
+      keywords: ["registration", "dmv"]
+    },
+    {
+      parentCategory: "Travel",
+      category: "Hotel",
+      keywords: ["hotel", "airbnb", "bnb", "hostel"]
+    },
+    {
+      parentCategory: "Travel",
+      category: "Flights",
+      keywords: ["flight", "airfare", "spirit", "checked bag", "seatbid", "flight to", "san fran flights"]
+    },
+    {
+      parentCategory: "Travel",
+      category: "Rental",
+      keywords: ["rental", "rent car", "car rental"]
+    },
+    {
+      parentCategory: "Travel",
+      category: "Activities",
+      keywords: ["activity"]
+    },
+    {
+      parentCategory: "Girlfriend",
+      category: "Gifts",
+      keywords: ["flowers", "vday", "valentines"]
+    },
+    {
+      parentCategory: "Girlfriend",
+      category: "Dates",
+      keywords: ["date night", "olive garden", "divieto", "north italia", "wood one ramen"]
+    },
+    {
+      parentCategory: "Girlfriend",
+      category: "Other",
+      keywords: ["gabby", "publix stuff"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Entertainment / Activities",
+      keywords: ["entertainment", "movie", "netflix", "spotify", "amc", "top golf", "miami heat",  "poker", "tequila", "drinks", "heat tickets"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Food",
+      keywords: ["doordash", "ubereats", "chipotle", "cfa", "shake shack", "mcd", "mcdonalds", "flanigans", "pubsub", "burger king", "bk", "rcg vending"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Haircut",
+      keywords: ["haircut", "barber", "salon"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Soccer",
+      keywords: ["soccer", "stadio", "fut5ive", "futbol", "la redonda", "ags"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Gaming",
+      keywords: ["psn", "playstation", "gaming", "sony", "marvel rivals", "nba2k", "steam"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Shopping",
+      keywords: ["shopping", "amazon", "clothes", "amz", "zara", "souvenir"]
+    },
+    {
+      parentCategory: "Personal",
+      category: "Other",
+      keywords: ["other", "misc"]
+    }
   ]
 };
 
 const legacyAliases = {
-  WEEK: { parentCategory: "Income", category: "Paycheck/Salary" },
+  "PAYCHECK/SALARY": { parentCategory: "Income", category: "Salary" },
+  WEEK: { parentCategory: "Income", category: "Salary" },
   GAM: { parentCategory: "Income", category: "Gambling" },
   RSL: { parentCategory: "Income", category: "Reselling" },
   FAA: { parentCategory: "Income", category: "Financial Aid" },
@@ -105,27 +233,39 @@ const legacyAliases = {
   GIFT: { parentCategory: "Girlfriend", category: "Gifts" },
   DATE: { parentCategory: "Girlfriend", category: "Dates" },
   OTH3: { parentCategory: "Girlfriend", category: "Other" },
-  ENT: { parentCategory: "Personal Expenses", category: "Entertainment / Activities" },
-  FOOD: { parentCategory: "Personal Expenses", category: "Food" },
-  CUT: { parentCategory: "Personal Expenses", category: "Haircut" },
+  ENT: { parentCategory: "Personal", category: "Entertainment / Activities" },
+  FOOD: { parentCategory: "Personal", category: "Food" },
+  CUT: { parentCategory: "Personal", category: "Haircut" },
   GROC: { parentCategory: "Expenses", category: "Groceries" },
-  SOCC: { parentCategory: "Personal Expenses", category: "Soccer" },
-  PSN: { parentCategory: "Personal Expenses", category: "Gaming" },
-  SHOP: { parentCategory: "Personal Expenses", category: "Shopping" },
-  OTH4: { parentCategory: "Personal Expenses", category: "Other" },
+  SOCC: { parentCategory: "Personal", category: "Soccer" },
+  PSN: { parentCategory: "Personal", category: "Gaming" },
+  SHOP: { parentCategory: "Personal", category: "Shopping" },
+  OTH4: { parentCategory: "Personal", category: "Other" },
   CAR: { parentCategory: "Expenses", category: "Car Payments" },
-  SALARY: { parentCategory: "Income", category: "Paycheck/Salary" },
+  SALARY: { parentCategory: "Income", category: "Salary" },
   "OTHER INCOME": { parentCategory: "Income", category: "Other Income" },
   "OTHER EXPENSE": { parentCategory: "Expenses", category: "Losses" }
 };
 
 db.serialize(() => {
   db.run(`
+    CREATE TABLE IF NOT EXISTS trips (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      start_date TEXT,
+      end_date TEXT,
+      created_at INTEGER NOT NULL,
+      archived INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY,
       date TEXT NOT NULL,
       description TEXT NOT NULL,
       parent_category TEXT,
+      trip_id TEXT,
       category TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
       amount REAL NOT NULL,
@@ -134,6 +274,11 @@ db.serialize(() => {
   `);
 
   db.run("ALTER TABLE transactions ADD COLUMN parent_category TEXT", () => {});
+  db.run("ALTER TABLE transactions ADD COLUMN trip_id TEXT", () => {});
+
+  // Keep historical data consistent with current category naming.
+  db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
+  db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
 });
 
 function dbRun(sql, params = []) {
@@ -158,6 +303,55 @@ function dbAll(sql, params = []) {
       resolve(rows);
     });
   });
+}
+
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (error, row) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(row);
+    });
+  });
+}
+
+async function resolveTripId(rawTripId) {
+  const cleanTripId = String(rawTripId || "").trim();
+  if (!cleanTripId) {
+    return "";
+  }
+
+  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND archived = 0", [cleanTripId]);
+  if (!trip) {
+    const error = new Error("Trip Not Found");
+    error.code = "TRIP_NOT_FOUND";
+    throw error;
+  }
+
+  return trip.id;
+}
+
+async function findOrCreateTripByName(rawName) {
+  const cleanName = String(rawName || "").trim();
+  if (!cleanName) {
+    return "";
+  }
+
+  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+  if (existing?.id) {
+    return existing.id;
+  }
+
+  const id = crypto.randomUUID();
+  await dbRun(
+    `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
+     VALUES (?, ?, ?, ?, ?, 0)`,
+    [id, cleanName, "", "", Date.now()]
+  );
+
+  return id;
 }
 
 function normalizeAmount(value) {
@@ -220,6 +414,41 @@ function normalizeDate(value) {
   return formatDateParts(today.getFullYear(), today.getMonth() + 1, today.getDate());
 }
 
+function addDays(dateStr, days) {
+  const date = new Date(`${String(dateStr || "").slice(0, 10)}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return normalizeDate(date);
+}
+
+function addMonths(dateStr, monthsToAdd) {
+  const base = new Date(`${String(dateStr || "").slice(0, 10)}T00:00:00`);
+  const originalDay = base.getDate();
+  const target = new Date(base.getFullYear(), base.getMonth() + monthsToAdd, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(originalDay, lastDay));
+  return normalizeDate(target);
+}
+
+function shiftDateByFrequency(dateStr, frequency, occurrenceIndex) {
+  if (occurrenceIndex <= 0 || frequency === "none") {
+    return normalizeDate(dateStr);
+  }
+
+  if (frequency === "weekly") {
+    return addDays(dateStr, 7 * occurrenceIndex);
+  }
+
+  if (frequency === "biweekly") {
+    return addDays(dateStr, 14 * occurrenceIndex);
+  }
+
+  if (frequency === "monthly") {
+    return addMonths(dateStr, occurrenceIndex);
+  }
+
+  return normalizeDate(dateStr);
+}
+
 function classifyCategory(description, type) {
   const lower = String(description || "").toLowerCase();
   const rules = classifyRules[type] || [];
@@ -232,12 +461,13 @@ function classifyCategory(description, type) {
 
   return type === "income"
     ? { parentCategory: "Income", category: "Other Income" }
-    : { parentCategory: "Personal Expenses", category: "Other" };
+    : { parentCategory: "Personal", category: "Other" };
 }
 
 function normalizeCategory({ value, parentCategory, type, description }) {
   const rawCategory = String(value || "").trim();
   const rawParent = String(parentCategory || "").trim();
+  const normalizedParent = rawParent.toLowerCase() === "personal expenses" ? "Personal" : rawParent;
   const groups = categoryModel[type] || [];
 
   if (rawCategory) {
@@ -253,8 +483,8 @@ function normalizeCategory({ value, parentCategory, type, description }) {
     }
   }
 
-  if (rawCategory && rawParent) {
-    const parentMatch = groups.find((group) => group.name.toLowerCase() === rawParent.toLowerCase());
+  if (rawCategory && normalizedParent) {
+    const parentMatch = groups.find((group) => group.name.toLowerCase() === normalizedParent.toLowerCase());
     if (parentMatch) {
       const sub = parentMatch.subcategories.find((subcategory) => subcategory.toLowerCase() === rawCategory.toLowerCase());
       if (sub) {
@@ -270,14 +500,60 @@ function findHeader(headers, patterns) {
   return headers.find((header) => patterns.some((pattern) => pattern.test(header)));
 }
 
-function toTransaction(row, mapping) {
-  const description = String(row[mapping.description] || "").trim();
-  const amountRaw = normalizeAmount(row[mapping.amount]);
-  if (!description || Number.isNaN(amountRaw) || amountRaw === 0) {
-    return null;
+function purgeExpiredImportPreviews() {
+  const now = Date.now();
+  for (const [token, item] of importPreviewCache.entries()) {
+    if (!item?.createdAt || now - item.createdAt > IMPORT_PREVIEW_TTL_MS) {
+      importPreviewCache.delete(token);
+    }
+  }
+}
+
+function buildImportMapping(headers, overrides = {}) {
+  const nextMapping = {
+    date: findHeader(headers, [/^date$/i, /transaction\s*date/i, /posted/i]) || "",
+    description: findHeader(headers, [/description/i, /merchant/i, /details/i, /memo/i, /name/i]) || "",
+    amount: findHeader(headers, [/^amount$/i, /value/i, /total/i, /cost/i]) || "",
+    type: findHeader(headers, [/^type$/i, /income|expense/i]) || "",
+    parentCategory: findHeader(headers, [/parent/i, /main\s*category/i]) || "",
+    category: findHeader(headers, [/^category$/i, /subcategory/i, /group/i, /class/i]) || "",
+    trip: findHeader(headers, [/^trip$/i, /trip\s*name/i]) || ""
+  };
+
+  const keys = ["date", "description", "amount", "type", "parentCategory", "category", "trip"];
+  for (const key of keys) {
+    const overrideValue = String(overrides?.[key] || "").trim();
+    if (!overrideValue) {
+      continue;
+    }
+
+    nextMapping[key] = headers.includes(overrideValue) ? overrideValue : "";
   }
 
-  const typeRaw = String(row[mapping.type] || "").trim().toLowerCase();
+  return nextMapping;
+}
+
+function getImportRowCell(row, headerName) {
+  if (!headerName) {
+    return "";
+  }
+
+  return row[headerName];
+}
+
+function parseImportRow(row, mapping, rowNumber) {
+  const description = String(getImportRowCell(row, mapping.description) || "").trim();
+  const amountRaw = normalizeAmount(getImportRowCell(row, mapping.amount));
+
+  if (!description) {
+    return { ok: false, reason: "Missing Description", rowNumber };
+  }
+
+  if (Number.isNaN(amountRaw) || amountRaw === 0) {
+    return { ok: false, reason: "Invalid Amount", rowNumber };
+  }
+
+  const typeRaw = String(getImportRowCell(row, mapping.type) || "").trim().toLowerCase();
   const type = typeRaw === "income" || typeRaw === "expense"
     ? typeRaw
     : amountRaw < 0
@@ -285,28 +561,175 @@ function toTransaction(row, mapping) {
       : "income";
 
   const normalized = normalizeCategory({
-    value: row[mapping.category],
-    parentCategory: row[mapping.parentCategory],
+    value: getImportRowCell(row, mapping.category),
+    parentCategory: getImportRowCell(row, mapping.parentCategory),
     type,
     description
   });
 
   return {
+    ok: true,
+    tx: {
+      rowNumber,
+      date: normalizeDate(getImportRowCell(row, mapping.date)),
+      description,
+      parentCategory: normalized.parentCategory,
+      category: normalized.category,
+      tripName: String(getImportRowCell(row, mapping.trip) || "").trim(),
+      type,
+      amount: Math.abs(amountRaw)
+    }
+  };
+}
+
+function buildDuplicateKey(tx) {
+  const amount = Number(tx.amount || 0).toFixed(2);
+  const normalizedDescription = String(tx.description || "").trim().toLowerCase();
+  return `${normalizeDate(tx.date)}|${normalizedDescription}|${tx.type}|${amount}`;
+}
+
+async function getExistingDuplicateKeys() {
+  const rows = await dbAll("SELECT date, description, type, amount FROM transactions");
+  return new Set(rows.map((row) => buildDuplicateKey(row)));
+}
+
+function buildImportPreview(rows, mapping, existingDuplicateKeys) {
+  const validTransactions = [];
+  const previewRows = [];
+  const duplicateCounts = {
+    existing: 0,
+    file: 0
+  };
+  const batchDuplicateKeys = new Set();
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const parsed = parseImportRow(row, mapping, rowNumber);
+
+    if (!parsed.ok) {
+      previewRows.push({
+        rowNumber,
+        description: String(getImportRowCell(row, mapping.description) || "").trim(),
+        type: "",
+        amount: "",
+        status: "invalid",
+        reason: parsed.reason
+      });
+      return;
+    }
+
+    const duplicateKey = buildDuplicateKey(parsed.tx);
+    let status = "ready";
+    let reason = "";
+
+    if (existingDuplicateKeys.has(duplicateKey)) {
+      status = "duplicate-existing";
+      reason = "Matches Existing Transaction";
+      duplicateCounts.existing += 1;
+    } else if (batchDuplicateKeys.has(duplicateKey)) {
+      status = "duplicate-file";
+      reason = "Duplicate Within File";
+      duplicateCounts.file += 1;
+    }
+
+    batchDuplicateKeys.add(duplicateKey);
+    validTransactions.push(parsed.tx);
+    previewRows.push({
+      rowNumber,
+      date: parsed.tx.date,
+      description: parsed.tx.description,
+      type: parsed.tx.type,
+      parentCategory: parsed.tx.parentCategory,
+      category: parsed.tx.category,
+      tripName: parsed.tx.tripName,
+      amount: parsed.tx.amount,
+      status,
+      reason
+    });
+  });
+
+  return {
+    validTransactions,
+    previewRows,
+    invalidCount: previewRows.filter((row) => row.status === "invalid").length,
+    duplicateExistingCount: duplicateCounts.existing,
+    duplicateFileCount: duplicateCounts.file
+  };
+}
+
+function toTransaction(row, mapping) {
+  const parsed = parseImportRow(row, mapping, 0);
+  if (!parsed.ok) {
+    return null;
+  }
+
+  return {
     id: crypto.randomUUID(),
-    date: normalizeDate(row[mapping.date]),
-    description,
-    parentCategory: normalized.parentCategory,
-    category: normalized.category,
-    type,
-    amount: Math.abs(amountRaw),
+    date: parsed.tx.date,
+    description: parsed.tx.description,
+    parentCategory: parsed.tx.parentCategory,
+    category: parsed.tx.category,
+    tripName: parsed.tx.tripName,
+    type: parsed.tx.type,
+    amount: parsed.tx.amount,
     createdAt: Date.now()
   };
 }
 
+app.get("/api/trips", async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+       FROM trips
+       WHERE archived = 0
+       ORDER BY name COLLATE NOCASE ASC`
+    );
+
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: "Failed To Load Trips" });
+  }
+});
+
+app.post("/api/trips", async (req, res) => {
+  const cleanName = String(req.body?.name || "").trim();
+  if (!cleanName) {
+    res.status(400).json({ error: "Trip Name Is Required" });
+    return;
+  }
+
+  try {
+    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+    if (existing) {
+      res.json(existing);
+      return;
+    }
+
+    const trip = {
+      id: crypto.randomUUID(),
+      name: cleanName,
+      startDate: "",
+      endDate: "",
+      archived: 0,
+      createdAt: Date.now()
+    };
+
+    await dbRun(
+      `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
+       VALUES (?, ?, ?, ?, ?, ?)` ,
+      [trip.id, trip.name, trip.startDate, trip.endDate, trip.createdAt, trip.archived]
+    );
+
+    res.status(201).json(trip);
+  } catch {
+    res.status(500).json({ error: "Failed To Create Trip" });
+  }
+});
+
 app.get("/api/transactions", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
        ORDER BY created_at DESC`
     );
@@ -333,46 +756,85 @@ app.get("/api/transactions", async (req, res) => {
 });
 
 app.post("/api/transactions", async (req, res) => {
-  const { description, amount, type, date, category, parentCategory } = req.body || {};
+  const { description, amount, type, date, category, parentCategory, tripId, recurrenceFrequency, recurrenceCount } = req.body || {};
   const cleanDescription = String(description || "").trim();
   const cleanType = type === "income" ? "income" : "expense";
   const cleanAmount = Number(amount);
   const cleanDate = normalizeDate(date);
+  const cleanFrequency = ["none", "monthly", "weekly", "biweekly"].includes(String(recurrenceFrequency || "none"))
+    ? String(recurrenceFrequency || "none")
+    : "none";
+  const parsedCount = Number(recurrenceCount);
+  const cleanRecurrenceCount = Number.isInteger(parsedCount) && parsedCount > 0 ? parsedCount : 1;
 
   if (!cleanDescription || Number.isNaN(cleanAmount) || cleanAmount <= 0) {
     res.status(400).json({ error: "Invalid Transaction Payload" });
     return;
   }
 
+  if (cleanRecurrenceCount > 36) {
+    res.status(400).json({ error: "Number Of Recurring Entries Cannot Exceed 36" });
+    return;
+  }
+
+  if (cleanFrequency === "none" && cleanRecurrenceCount > 1) {
+    res.status(400).json({ error: "Frequency Must Be Set For Multiple Entries" });
+    return;
+  }
+
   const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
 
-  const tx = {
-    id: crypto.randomUUID(),
-    date: cleanDate,
-    description: cleanDescription,
-    parentCategory: normalized.parentCategory,
-    category: normalized.category,
-    type: cleanType,
-    amount: cleanAmount,
-    createdAt: Date.now()
-  };
-
   try {
-    await dbRun(
-      `INSERT INTO transactions (id, date, description, parent_category, category, type, amount, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [tx.id, tx.date, tx.description, tx.parentCategory, tx.category, tx.type, tx.amount, tx.createdAt]
-    );
+    const cleanTripId = await resolveTripId(tripId);
 
-    res.status(201).json(tx);
-  } catch {
+    const entriesToCreate = cleanFrequency === "none" ? 1 : cleanRecurrenceCount;
+    const created = [];
+
+    await dbRun("BEGIN TRANSACTION");
+
+    for (let i = 0; i < entriesToCreate; i += 1) {
+      const tx = {
+        id: crypto.randomUUID(),
+        date: shiftDateByFrequency(cleanDate, cleanFrequency, i),
+        description: cleanDescription,
+        parentCategory: normalized.parentCategory,
+        tripId: cleanTripId,
+        category: normalized.category,
+        type: cleanType,
+        amount: cleanAmount,
+        createdAt: Date.now() + i
+      };
+
+      await dbRun(
+        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, tx.category, tx.type, tx.amount, tx.createdAt]
+      );
+
+      created.push(tx);
+    }
+
+    await dbRun("COMMIT");
+
+    if (created.length === 1) {
+      res.status(201).json(created[0]);
+      return;
+    }
+
+    res.status(201).json({ created });
+  } catch (error) {
+    await dbRun("ROLLBACK").catch(() => {});
+    if (error?.code === "TRIP_NOT_FOUND") {
+      res.status(400).json({ error: "Selected Trip Does Not Exist" });
+      return;
+    }
     res.status(500).json({ error: "Failed To Save Transaction" });
   }
 });
 
 app.put("/api/transactions/:id", async (req, res) => {
   const { id } = req.params;
-  const { description, amount, type, date, category, parentCategory } = req.body || {};
+  const { description, amount, type, date, category, parentCategory, tripId } = req.body || {};
 
   const cleanDescription = String(description || "").trim();
   const cleanType = type === "income" ? "income" : "expense";
@@ -387,11 +849,13 @@ app.put("/api/transactions/:id", async (req, res) => {
   const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
 
   try {
+    const cleanTripId = await resolveTripId(tripId);
+
     const result = await dbRun(
       `UPDATE transactions
-       SET date = ?, description = ?, parent_category = ?, category = ?, type = ?, amount = ?
+       SET date = ?, description = ?, parent_category = ?, trip_id = ?, category = ?, type = ?, amount = ?
        WHERE id = ?`,
-      [cleanDate, cleanDescription, normalized.parentCategory, normalized.category, cleanType, cleanAmount, id]
+      [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, cleanType, cleanAmount, id]
     );
 
     if (!result.changes) {
@@ -400,14 +864,18 @@ app.put("/api/transactions/:id", async (req, res) => {
     }
 
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
        WHERE id = ?`,
       [id]
     );
 
     res.json(rows[0]);
-  } catch {
+  } catch (error) {
+    if (error?.code === "TRIP_NOT_FOUND") {
+      res.status(400).json({ error: "Selected Trip Does Not Exist" });
+      return;
+    }
     res.status(500).json({ error: "Failed To Update Transaction" });
   }
 });
@@ -461,14 +929,7 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
     }
 
     const headers = Object.keys(rows[0]);
-    const mapping = {
-      date: findHeader(headers, [/^date$/i, /transaction\s*date/i, /posted/i]) || "",
-      description: findHeader(headers, [/description/i, /merchant/i, /details/i, /memo/i, /name/i]) || "",
-      amount: findHeader(headers, [/^amount$/i, /value/i, /total/i, /cost/i]) || "",
-      type: findHeader(headers, [/^type$/i, /income|expense/i]) || "",
-      parentCategory: findHeader(headers, [/parent/i, /main\s*category/i]) || "",
-      category: findHeader(headers, [/^category$/i, /subcategory/i, /group/i, /class/i]) || ""
-    };
+    const mapping = buildImportMapping(headers);
 
     if (!mapping.description || !mapping.amount) {
       res.status(400).json({ error: "Could Not Detect Description/Amount Columns" });
@@ -484,10 +945,12 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
         continue;
       }
 
+      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
+
       await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.id, tx.date, tx.description, tx.parentCategory, tx.category, tx.type, tx.amount, tx.createdAt]
+        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, tx.createdAt]
       );
 
       importedCount += 1;
@@ -503,6 +966,139 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
   }
 });
 
+app.post("/api/import-preview", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: "No File Uploaded" });
+    return;
+  }
+
+  try {
+    const workbook = xlsx.readFile(req.file.path, { cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+
+    if (!sheet) {
+      res.status(400).json({ error: "Excel Sheet Is Empty" });
+      return;
+    }
+
+    const rows = xlsx.utils.sheet_to_json(sheet, { defval: "" });
+    if (!rows.length) {
+      res.status(400).json({ error: "No Rows Found In Excel" });
+      return;
+    }
+
+    const headers = Object.keys(rows[0]);
+    const mapping = buildImportMapping(headers);
+
+    if (!mapping.description || !mapping.amount) {
+      res.status(400).json({ error: "Could Not Detect Description/Amount Columns" });
+      return;
+    }
+
+    const existingDuplicateKeys = await getExistingDuplicateKeys();
+    const preview = buildImportPreview(rows, mapping, existingDuplicateKeys);
+    const token = crypto.randomUUID();
+
+    purgeExpiredImportPreviews();
+    importPreviewCache.set(token, {
+      createdAt: Date.now(),
+      rows,
+      headers,
+      fileName: req.file.originalname || ""
+    });
+
+    res.json({
+      token,
+      fileName: req.file.originalname || "",
+      headers,
+      mapping,
+      summary: {
+        totalRows: rows.length,
+        readyRows: preview.previewRows.filter((row) => row.status === "ready").length,
+        invalidRows: preview.invalidCount,
+        duplicateExistingRows: preview.duplicateExistingCount,
+        duplicateFileRows: preview.duplicateFileCount
+      },
+      previewRows: preview.previewRows.slice(0, 150)
+    });
+  } catch {
+    res.status(500).json({ error: "Failed To Build Import Preview" });
+  } finally {
+    fs.unlink(req.file.path, () => {});
+  }
+});
+
+app.post("/api/import-commit", async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  if (!token) {
+    res.status(400).json({ error: "Missing Import Token" });
+    return;
+  }
+
+  purgeExpiredImportPreviews();
+  const cachedPreview = importPreviewCache.get(token);
+  if (!cachedPreview) {
+    res.status(410).json({ error: "Import Preview Expired. Please Upload Again." });
+    return;
+  }
+
+  const mapping = buildImportMapping(cachedPreview.headers, req.body?.mapping || {});
+  if (!mapping.description || !mapping.amount) {
+    res.status(400).json({ error: "Description And Amount Mappings Are Required" });
+    return;
+  }
+
+  const skipDuplicates = req.body?.skipDuplicates !== false;
+
+  try {
+    const existingDuplicateKeys = skipDuplicates ? await getExistingDuplicateKeys() : new Set();
+    const preview = buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys);
+    const batchDuplicateKeys = new Set();
+
+    let importedCount = 0;
+    let skippedCount = preview.invalidCount;
+    let skippedDuplicateCount = 0;
+
+    await dbRun("BEGIN TRANSACTION");
+
+    for (const tx of preview.validTransactions) {
+      const duplicateKey = buildDuplicateKey(tx);
+      if (skipDuplicates && (existingDuplicateKeys.has(duplicateKey) || batchDuplicateKeys.has(duplicateKey))) {
+        skippedCount += 1;
+        skippedDuplicateCount += 1;
+        continue;
+      }
+
+      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
+      const createdAt = Date.now() + importedCount;
+
+      await dbRun(
+        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, createdAt]
+      );
+
+      importedCount += 1;
+      batchDuplicateKeys.add(duplicateKey);
+      existingDuplicateKeys.add(duplicateKey);
+    }
+
+    await dbRun("COMMIT");
+    importPreviewCache.delete(token);
+
+    res.json({
+      importedCount,
+      skippedCount,
+      skippedDuplicateCount,
+      invalidCount: preview.invalidCount
+    });
+  } catch {
+    await dbRun("ROLLBACK").catch(() => {});
+    res.status(500).json({ error: "Failed To Commit Import" });
+  }
+});
+
 app.get("/api/export-excel", async (req, res) => {
   try {
     const transactions = await dbAll(
@@ -510,7 +1106,6 @@ app.get("/api/export-excel", async (req, res) => {
        FROM transactions
        ORDER BY date ASC, parent_category ASC, type DESC`
     );
-
     if (!transactions.length) {
       res.status(400).json({ error: "No Transactions To Export" });
       return;
@@ -709,6 +1304,56 @@ app.get("/api/export-excel", async (req, res) => {
     res.status(500).json({ error: "Failed To Export Transactions" });
   }
 });
+
+app.get("/api/export-backup-csv", async (req, res) => {
+  try {
+    const rows = await dbAll(
+      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS parentCategory, COALESCE(t.trip_id, '') AS tripId,
+              t.category, t.type, t.amount, COALESCE(tr.name, '') AS tripName
+       FROM transactions t
+       LEFT JOIN trips tr ON tr.id = t.trip_id
+       ORDER BY t.date ASC, t.created_at ASC`
+    );
+
+    const headers = ["Date", "Description", "Amount", "Type", "Parent Category", "Category", "Trip"];
+    const csvRows = [headers.map(csvQuote).join(",")];
+
+    for (const row of rows) {
+      const normalized = normalizeCategory({
+        value: row.category,
+        parentCategory: row.parentCategory,
+        type: row.type,
+        description: row.description
+      });
+
+      const line = [
+        row.date,
+        row.description,
+        Number(row.amount).toFixed(2),
+        row.type,
+        normalized.parentCategory,
+        normalized.category,
+        row.tripName
+      ]
+        .map(csvQuote)
+        .join(",");
+
+      csvRows.push(line);
+    }
+
+    const payload = `${csvRows.join("\r\n")}\r\n`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=budget-pulse-backup.csv");
+    res.send(payload);
+  } catch {
+    res.status(500).json({ error: "Failed To Export Backup CSV" });
+  }
+});
+
+function csvQuote(value) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
 
 app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
