@@ -1,64 +1,82 @@
 # Budget Pulse Dashboard
 
-A dashboard that reduces Excel usage by combining:
+Budget Pulse is a full-stack personal finance dashboard with:
 
-- A quick input widget (form-like entry)
-- Automatic category classification based on description keywords
-- Permanent project storage in SQLite (`budget.db`)
-- Excel import to prefill your current data
-- Instant analytics and recent transaction visibility
-
-## Category Rules (from your Excel setup)
-
-- Income categories (first 5): `WEEK`, `GAM`, `RSL`, `FAA`, `OTH`
-- Expense categories: `MEM`, `VAC`, `INV`, `LSS`, `GAS`, `INS`, `OIL`, `TOL`, `PAR`, `OTH2`, `GIFT`, `DATE`, `OTH3`, `ENT`, `FOOD`, `CUT`, `GROC`, `SOCC`, `PSN`, `SHOP`, `OTH4`, `CAR`
-
-Quick Add only uses these categories, and auto-suggestion maps descriptions into this list.
+- Quick Add transaction entry
+- Auto-categorization by keyword rules
+- Import preview and commit from Excel
+- Export to Excel and backup CSV
+- Trip tagging and summaries
+- Local SQLite storage
 
 ## Run Locally
 
-1. Install dependencies: `npm install`
-2. Start server: `npm start`
-3. Open: `http://localhost:4100`
+1. Install dependencies:
+  - `npm install`
+2. Copy env template (optional for local):
+  - `copy .env.example .env`
+3. Start server:
+  - `npm start`
+4. Open:
+  - `http://localhost:4100`
 
-Your data is stored in `budget.db`, so it remains in the project even after closing the browser.
+Local data is stored in `budget.db`.
 
-## Import Your Existing Excel
+## Environment Variables
 
-1. Open the dashboard.
-2. In **Import Existing Excel**, choose your workbook (`.xlsx`/`.xls`).
-3. Click **Import Excel**.
+Use `.env` (or host env settings) for runtime config:
 
-The importer auto-detects typical headers such as Date, Description/Merchant, Amount, Type, and Category.
+- `PORT`: server port (defaults to `4100`)
+- `CLIENT_ORIGINS`: comma-separated allowed frontend origins for CORS
+  - Example: `https://pulse-ui.pages.dev,https://www.yourdomain.com`
+  - Use `*` only for temporary testing
 
-## Multi-Device Access (Phone + Laptop)
+## Free Deployment Paths
 
-To use one shared dashboard from multiple devices, run this project on one machine/server and open that same server URL from each device.
+### Option A: Single Service (Easiest)
 
-For home network access:
+Deploy the whole app (frontend + backend) as one free Node web service on Render.
 
-1. Start the server with `npm start`.
-2. Find your computer IP, for example `192.168.1.25`.
-3. Open `http://192.168.1.25:4100` on phone/laptop connected to the same Wi-Fi.
+1. Push this repo to GitHub.
+2. In Render, create a **Web Service** from the repo.
+3. Build command: `npm install`
+4. Start command: `npm start`
+5. Set env vars:
+  - `PORT` is managed by Render automatically.
+  - `CLIENT_ORIGINS` can stay empty for same-origin deployment.
+6. Deploy and open your Render URL.
 
-All devices will read and write the same `budget.db` data.
+This keeps all features working with no frontend/backend split.
 
-## How It Works
+### Option B: Static Frontend + Separate Backend
 
-- Entries are stored in SQLite through `/api/transactions`.
-- Excel import uses `/api/import-excel` and inserts rows into the same database.
-- Dashboard cards update automatically:
-  - Current Balance
-  - Total Income
-  - Total Expenses
-  - Savings Rate
-- Chart views show:
-  - Expense Categories (doughnut)
-  - Monthly Cashflow (income vs expense)
-- Recent Entries shows latest 10 transactions.
-- Use Export CSV to download current data.
-- Use Clear Data to reset all records.
+If you host `index.html`/`app.js`/`styles.css` on a static host (Cloudflare Pages, GitHub Pages, Netlify), keep backend on a Node host.
+
+1. Deploy backend (Render web service).
+2. Set backend `CLIENT_ORIGINS` to your static site URL.
+3. In `config.js`, set:
+  - `window.__PULSE_API_BASE__ = "https://your-backend-domain.com";`
+4. Deploy static frontend files.
+
+Frontend now sends API calls to that backend base URL.
+
+## Render Blueprint File
+
+This repo includes `render.yaml` for Render blueprint-style setup.
+
+## Health Check
+
+Backend health endpoint:
+
+- `GET /api/health` returns `{ "status": "ok" }`
+
+## Data Persistence Note
+
+Current storage is SQLite (`budget.db`). On free cloud runtimes, local disk persistence can be limited depending on provider lifecycle. For durable production persistence, migrate DB to a managed Postgres provider and update server queries accordingly.
 
 ## Customize Classification
 
-Edit `categoryRules` in `app.js` and `server.js` to add your own merchants/keywords and categories.
+Edit rule sets in:
+
+- `app.js`
+- `server.js`

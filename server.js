@@ -9,6 +9,11 @@ const xlsx = require("xlsx");
 
 const PORT = Number(process.env.PORT) || 4100;
 const DB_PATH = path.join(__dirname, "budget.db");
+const CLIENT_ORIGINS = String(process.env.CLIENT_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const ALLOW_ALL_ORIGINS = CLIENT_ORIGINS.includes("*");
 
 const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
@@ -16,6 +21,29 @@ const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 const importPreviewCache = new Map();
 
 app.use(express.json());
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (!origin) {
+    next();
+    return;
+  }
+
+  const isAllowed = ALLOW_ALL_ORIGINS || CLIENT_ORIGINS.includes(origin);
+  if (isAllowed) {
+    res.setHeader("Access-Control-Allow-Origin", ALLOW_ALL_ORIGINS ? "*" : origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  }
+
+  if (req.method === "OPTIONS") {
+    res.sendStatus(isAllowed ? 204 : 403);
+    return;
+  }
+
+  next();
+});
 app.use(express.static(__dirname));
 
 const db = new sqlite3.Database(DB_PATH);
@@ -1354,6 +1382,10 @@ app.get("/api/export-backup-csv", async (req, res) => {
 function csvQuote(value) {
   return `"${String(value ?? "").replaceAll('"', '""')}"`;
 }
+
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 
 app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));

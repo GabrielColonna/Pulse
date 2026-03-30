@@ -69,6 +69,29 @@ const CATEGORY_MODEL = {
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
 const PRIVACY_PIN = "0307";
+const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
+
+function normalizeApiBase(rawBase) {
+  const base = String(rawBase || "").trim();
+  if (!base) {
+    return "";
+  }
+
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function buildApiUrl(pathname) {
+  const path = String(pathname || "");
+  if (/^https?:\/\//i.test(path) || !API_BASE) {
+    return path;
+  }
+
+  return path.startsWith("/") ? `${API_BASE}${path}` : `${API_BASE}/${path}`;
+}
+
+function apiFetch(pathname, options) {
+  return fetch(buildApiUrl(pathname), options);
+}
 
 const state = {
   transactions: [],
@@ -626,7 +649,7 @@ function onRecurrenceFrequencyChanged() {
 
 async function refreshTrips() {
   try {
-    const response = await fetch("/api/trips");
+    const response = await apiFetch("/api/trips");
     if (!response.ok) {
       throw new Error("Could Not Fetch Trips");
     }
@@ -675,7 +698,7 @@ async function onCreateTrip() {
   }
 
   try {
-    const response = await fetch("/api/trips", {
+    const response = await apiFetch("/api/trips", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name })
@@ -938,7 +961,7 @@ function getTransactionsForActiveMonth() {
 
 async function refreshTransactions() {
   try {
-    const response = await fetch("/api/transactions");
+    const response = await apiFetch("/api/transactions");
     if (!response.ok) {
       throw new Error("Could Not Fetch Transactions");
     }
@@ -1002,7 +1025,7 @@ async function onSubmitEntry(event) {
 
   try {
     if (state.editingId) {
-      const response = await fetch(`/api/transactions/${state.editingId}`, {
+      const response = await apiFetch(`/api/transactions/${state.editingId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1016,7 +1039,7 @@ async function onSubmitEntry(event) {
       setMessage("Transaction Updated.", false);
       exitEditMode({ keepMessage: true });
     } else {
-      const response = await fetch("/api/transactions", {
+      const response = await apiFetch("/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1131,7 +1154,7 @@ async function onRecentAction(event) {
     }
 
     try {
-      const response = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
       if (!response.ok) {
         throw new Error("Delete Failed");
       }
@@ -1180,7 +1203,7 @@ async function onMonthLogAction(event) {
     }
 
     try {
-      const response = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
       if (!response.ok) {
         throw new Error("Delete Failed");
       }
@@ -1218,7 +1241,7 @@ async function clearAllData() {
   }
 
   try {
-    const response = await fetch("/api/transactions", { method: "DELETE" });
+    const response = await apiFetch("/api/transactions", { method: "DELETE" });
     if (!response.ok) {
       throw new Error("Delete Failed");
     }
@@ -1248,7 +1271,7 @@ async function importFromFile() {
   setImportMessage("Preparing Import Preview...", false);
 
   try {
-    const response = await fetch("/api/import-preview", {
+    const response = await apiFetch("/api/import-preview", {
       method: "POST",
       body: payload
     });
@@ -1405,7 +1428,7 @@ async function commitImportPreview() {
   setImportMessage("Importing Confirmed Rows...", false);
 
   try {
-    const response = await fetch("/api/import-commit", {
+    const response = await apiFetch("/api/import-commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1440,7 +1463,7 @@ function exportToCsv() {
   }
 
   // Fetch Excel export from server
-  fetch("/api/export-excel")
+  apiFetch("/api/export-excel")
     .then((response) => {
       if (!response.ok) {
         throw new Error("Export failed");
@@ -1464,7 +1487,7 @@ function exportToCsv() {
 
 function exportBackupCsv() {
   // Fetch import-ready CSV backup from server.
-  fetch("/api/export-backup-csv")
+  apiFetch("/api/export-backup-csv")
     .then((response) => {
       if (!response.ok) {
         throw new Error("Backup export failed");
@@ -1975,7 +1998,7 @@ async function deleteSelectedMonthLogRows() {
 
   for (const id of ids) {
     try {
-      const response = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/transactions/${id}`, { method: "DELETE" });
       if (!response.ok) {
         throw new Error("Delete Failed");
       }
