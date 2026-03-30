@@ -9,6 +9,19 @@ This roadmap turns Budget Pulse into a more complete personal finance product wh
 2. Improve confidence in balances and reports.
 3. Make imports safer and easier.
 4. Support growth from single-user use to shared household use.
+5. Prepare for secure, user-friendly public launch.
+
+## Public Launch Direction (New)
+
+To move from prototype to production, Budget Pulse now prioritizes security, account-based data ownership, and polished onboarding.
+
+### Public Launch Milestones
+
+1. Server-enforced authentication and authorization.
+2. Per-user data isolation for all finance records.
+3. Security hardening (validation, rate limits, headers, session safety).
+4. Operational reliability (tests, backups, monitoring).
+5. UX polish for mainstream users (onboarding, settings, help states).
 
 ## Success Metrics
 
@@ -209,18 +222,85 @@ Definition of done:
 - Critical flows have automated tests.
 - Test suite runs in CI on each change.
 
+## Phase 5: Production Security and Public Readiness (4-8 weeks)
+
+### 13) Real Authentication and Account Security
+Replace local-only lock behavior with production auth.
+
+Why it matters:
+- Protects user data with server-side identity checks.
+- Makes the app safe for public usage.
+
+Implementation notes:
+- Add user registration/login/logout with hashed passwords.
+- Add authenticated sessions and protected API routes.
+- Add password reset flow and optional MFA-ready structure.
+
+Definition of done:
+- Every protected API route requires valid auth.
+- Users can only access their own data.
+
+### 14) Data Ownership and Tenant Isolation
+Ensure all data is scoped to the authenticated user.
+
+Why it matters:
+- Prevents cross-user data leakage.
+- Enables safe multi-user scaling.
+
+Implementation notes:
+- Add `user_id` to transactions, trips, savings goals, and future tables.
+- Add indexes for user-scoped query performance.
+- Backfill/migrate existing local data safely.
+
+Definition of done:
+- User A cannot view or modify User B records.
+- All list/report APIs are user-scoped by default.
+
+### 15) Security Hardening and Abuse Protection
+Introduce baseline app security controls.
+
+Why it matters:
+- Reduces account takeover and API abuse risk.
+
+Implementation notes:
+- Add request validation on all write endpoints.
+- Add rate limiting for auth and destructive actions.
+- Add secure headers, strict CORS, and session cookie protections.
+- Move all secrets/config into environment variables.
+
+Definition of done:
+- Security checks are enforced in middleware.
+- Sensitive operations are logged with actor and timestamp.
+
+### 16) Operational Reliability and Trust
+Improve reliability and production observability.
+
+Why it matters:
+- Public users need uptime, recoverability, and predictable behavior.
+
+Implementation notes:
+- Add API integration tests for auth + critical finance flows.
+- Add CI quality gates (lint/test/build).
+- Add backup/restore runbook and health monitoring.
+
+Definition of done:
+- Deploy pipeline blocks regressions.
+- Recovery steps are documented and tested.
+
 ## Recommended Build Order
 
-1. Search and filters.
-2. Import preview and duplicate handling.
-3. Backup and restore.
-4. Budgets.
-5. Recurring transactions.
-6. Split transactions.
-7. Rule editor UI.
-8. Insights and savings goals.
-9. Multi-user and PWA.
-10. Test automation hardening throughout.
+1. Real authentication + protected routes.
+2. Per-user data isolation and migrations.
+3. Security hardening middleware.
+4. Search and filters.
+5. Import preview and duplicate handling.
+6. Backup and restore.
+7. Budgets.
+8. Recurring transactions.
+9. Split transactions.
+10. Rule editor UI.
+11. Insights and savings goals.
+12. Multi-user, PWA, and ongoing test hardening.
 
 ## Risks and Mitigations
 
@@ -233,9 +313,9 @@ Definition of done:
 
 ## Immediate Next Sprint (Suggested)
 
-1. Implement advanced filters.
-2. Implement import preview with manual mapping.
-3. Add backup/restore actions.
-4. Add API tests for import + balances.
+1. Implement server-side auth (register/login/logout + hashed passwords).
+2. Add auth middleware to protect all finance APIs.
+3. Add `user_id` scoping for transactions/trips/savings.
+4. Add request validation + rate limiting for auth and delete routes.
 
-This sprint will deliver the highest user value with the lowest complexity increase.
+This sprint establishes the minimum secure foundation required for public launch.

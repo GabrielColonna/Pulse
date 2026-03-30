@@ -67,12 +67,21 @@ const CATEGORY_MODEL = {
 };
 
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
+const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
+const PRIVACY_PIN = "0307";
 
 const state = {
   transactions: [],
   trips: [],
   editingId: null,
   monthOffset: 0,
+  monthLogDeleteMode: false,
+  monthLogSelectedIds: new Set(),
+  savingsGoal: {
+    name: "",
+    targetAmount: 0,
+    bufferMonths: 2
+  },
   tripSummaryFilter: {
     trip: "all"
   },
@@ -90,8 +99,15 @@ const state = {
 
 let formMessageTimeoutId = null;
 let importMessageTimeoutId = null;
+let appDialogResolver = null;
+let appDialogMode = "confirm";
+let hasInitializedDashboard = false;
 
 const els = {
+  privacyGate: document.getElementById("privacyGate"),
+  privacyPinInput: document.getElementById("privacyPinInput"),
+  privacyUnlockButton: document.getElementById("privacyUnlockButton"),
+  privacyError: document.getElementById("privacyError"),
   appShell: document.querySelector(".app-shell"),
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
@@ -108,6 +124,7 @@ const els = {
   tripSelect: document.getElementById("tripSelect"),
   recurrenceFrequency: document.getElementById("recurrenceFrequency"),
   recurrenceCount: document.getElementById("recurrenceCount"),
+  openSavingsButton: document.getElementById("openSavingsButton"),
   createTripButton: document.getElementById("createTripButton"),
   openTripSummaryButton: document.getElementById("openTripSummaryButton"),
   submitButton: document.getElementById("submitButton"),
@@ -133,6 +150,12 @@ const els = {
   openMonthLogButton: document.getElementById("openMonthLogButton"),
   monthLogModal: document.getElementById("monthLogModal"),
   closeMonthLogButton: document.getElementById("closeMonthLogButton"),
+  monthLogDeleteModeButton: document.getElementById("monthLogDeleteModeButton"),
+  monthLogBulkActions: document.getElementById("monthLogBulkActions"),
+  monthLogSelectAllButton: document.getElementById("monthLogSelectAllButton"),
+  monthLogDeselectAllButton: document.getElementById("monthLogDeselectAllButton"),
+  monthLogDeleteSelectedButton: document.getElementById("monthLogDeleteSelectedButton"),
+  monthLogSelectHeader: document.getElementById("monthLogSelectHeader"),
   monthLogSubtitle: document.getElementById("monthLogSubtitle"),
   monthLogBody: document.getElementById("monthLogBody"),
   monthLogTotals: document.getElementById("monthLogTotals"),
@@ -161,6 +184,21 @@ const els = {
   importMapCategory: document.getElementById("importMapCategory"),
   importMapTrip: document.getElementById("importMapTrip"),
   importSkipDuplicates: document.getElementById("importSkipDuplicates"),
+  appDialogModal: document.getElementById("appDialogModal"),
+  appDialogTitle: document.getElementById("appDialogTitle"),
+  appDialogMessage: document.getElementById("appDialogMessage"),
+  appDialogInputWrap: document.getElementById("appDialogInputWrap"),
+  appDialogInput: document.getElementById("appDialogInput"),
+  appDialogConfirmButton: document.getElementById("appDialogConfirmButton"),
+  appDialogCancelButton: document.getElementById("appDialogCancelButton"),
+  savingsModal: document.getElementById("savingsModal"),
+  closeSavingsButton: document.getElementById("closeSavingsButton"),
+  savingsGoalName: document.getElementById("savingsGoalName"),
+  savingsGoalAmount: document.getElementById("savingsGoalAmount"),
+  savingsBufferMonths: document.getElementById("savingsBufferMonths"),
+  saveSavingsGoalButton: document.getElementById("saveSavingsGoalButton"),
+  savingsSummaryCards: document.getElementById("savingsSummaryCards"),
+  savingsInsightsList: document.getElementById("savingsInsightsList"),
   resetMonthLogFilters: document.getElementById("resetMonthLogFilters"),
   clearButton: document.getElementById("clearButton"),
   exportButton: document.getElementById("exportButton"),
@@ -171,7 +209,77 @@ const els = {
 };
 
 async function init() {
+  if (!initializePrivacyGate()) {
+    return;
+  }
+
+  await initializeDashboard();
+}
+
+function initializePrivacyGate() {
+  if (!els.privacyGate || !els.appShell || !els.privacyPinInput || !els.privacyUnlockButton) {
+    return true;
+  }
+
+  els.privacyGate.hidden = false;
+  els.appShell.hidden = true;
+  els.privacyPinInput.value = "";
+  els.privacyPinInput.focus();
+
+  els.privacyUnlockButton.addEventListener("click", onPrivacyUnlockAttempt);
+  els.privacyPinInput.addEventListener("keydown", onPrivacyPinKeydown);
+  return false;
+}
+
+function onPrivacyPinKeydown(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    onPrivacyUnlockAttempt();
+  }
+}
+
+function waitFor(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function onPrivacyUnlockAttempt() {
+  const inputPin = String(els.privacyPinInput.value || "").trim();
+  if (inputPin !== PRIVACY_PIN) {
+    if (els.privacyError) {
+      els.privacyError.textContent = "Incorrect PIN. Try Again.";
+      els.privacyError.style.color = "#ff4766";
+    }
+    els.privacyPinInput.value = "";
+    els.privacyPinInput.focus();
+    return;
+  }
+
+  if (els.privacyError) {
+    els.privacyError.textContent = "Access Granted.";
+    els.privacyError.style.color = "#86ffb8";
+  }
+
+  els.privacyUnlockButton.disabled = true;
+  els.privacyPinInput.disabled = true;
+  els.privacyGate.classList.add("privacy-unlock-success");
+
+  await waitFor(1000);
+
+  els.privacyGate.hidden = true;
+  els.appShell.hidden = false;
+  await initializeDashboard();
+}
+
+async function initializeDashboard() {
+  if (hasInitializedDashboard) {
+    return;
+  }
+
+  hasInitializedDashboard = true;
   hydrateSidebarState();
+  hydrateSavingsGoal();
   setDefaultDate();
   populateParentCategories("expense");
   if (els.tripAccordion) {
@@ -196,6 +304,9 @@ function wireEvents() {
   if (els.openSettingsButton) {
     els.openSettingsButton.addEventListener("click", onOpenSettings);
   }
+  if (els.openSavingsButton) {
+    els.openSavingsButton.addEventListener("click", openSavingsModal);
+  }
   els.description.addEventListener("input", suggestCategoryFromDescription);
   els.entryType.addEventListener("change", onTypeChange);
   els.parentCategorySelect.addEventListener("change", onParentCategoryChange);
@@ -214,12 +325,29 @@ function wireEvents() {
   els.openMonthLogButton.addEventListener("click", openMonthLogModal);
   els.openTripSummaryButton.addEventListener("click", openTripSummaryModal);
   els.closeMonthLogButton.addEventListener("click", closeMonthLogModal);
+  els.monthLogDeleteModeButton.addEventListener("click", toggleMonthLogDeleteMode);
+  els.monthLogSelectAllButton.addEventListener("click", selectAllMonthLogRows);
+  els.monthLogDeselectAllButton.addEventListener("click", deselectAllMonthLogRows);
+  els.monthLogDeleteSelectedButton.addEventListener("click", deleteSelectedMonthLogRows);
   els.closeTripSummaryButton.addEventListener("click", closeTripSummaryModal);
   els.monthLogModal.addEventListener("click", onModalBackdropClick);
   els.tripSummaryModal.addEventListener("click", onModalBackdropClick);
   els.importPreviewModal.addEventListener("click", onModalBackdropClick);
+  els.appDialogModal.addEventListener("click", onModalBackdropClick);
+  if (els.savingsModal) {
+    els.savingsModal.addEventListener("click", onModalBackdropClick);
+  }
   els.closeImportPreviewButton.addEventListener("click", closeImportPreviewModal);
   els.cancelImportPreviewButton.addEventListener("click", closeImportPreviewModal);
+  if (els.closeSavingsButton) {
+    els.closeSavingsButton.addEventListener("click", closeSavingsModal);
+  }
+  if (els.saveSavingsGoalButton) {
+    els.saveSavingsGoalButton.addEventListener("click", saveSavingsGoal);
+  }
+  els.appDialogConfirmButton.addEventListener("click", onAppDialogConfirm);
+  els.appDialogCancelButton.addEventListener("click", onAppDialogCancel);
+  els.appDialogInput.addEventListener("keydown", onAppDialogInputKeydown);
   els.confirmImportButton.addEventListener("click", commitImportPreview);
   els.importMapDate.addEventListener("change", onImportMappingChanged);
   els.importMapDescription.addEventListener("change", onImportMappingChanged);
@@ -235,6 +363,7 @@ function wireEvents() {
   els.tripSummaryTripFilter.addEventListener("change", onTripSummaryFilterChanged);
   els.resetMonthLogFilters.addEventListener("click", resetMonthLogFilters);
   els.monthLogBody.addEventListener("click", onMonthLogAction);
+  els.monthLogBody.addEventListener("change", onMonthLogSelectionChanged);
 }
 
 function hydrateSidebarState() {
@@ -273,6 +402,215 @@ function onOpenUserProfile() {
 
 function onOpenSettings() {
   setImportMessage("Settings Panel Is Coming Soon. This Slot Is Ready For Preferences, Theme, And Security.", false);
+}
+
+function hydrateSavingsGoal() {
+  try {
+    const raw = window.localStorage.getItem(SAVINGS_GOAL_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    const name = String(parsed?.name || "").trim();
+    const targetAmount = Number(parsed?.targetAmount || 0);
+    const bufferMonths = Number.isFinite(Number(parsed?.bufferMonths)) ? Number(parsed?.bufferMonths) : 2;
+    if (!name || !Number.isFinite(targetAmount) || targetAmount <= 0) {
+      return;
+    }
+
+    state.savingsGoal = {
+      name,
+      targetAmount,
+      bufferMonths: Math.max(0, Math.min(24, Math.round(bufferMonths)))
+    };
+  } catch {
+    // Ignore malformed saved state and keep defaults.
+  }
+}
+
+function persistSavingsGoal() {
+  if (!state.savingsGoal.name || state.savingsGoal.targetAmount <= 0) {
+    window.localStorage.removeItem(SAVINGS_GOAL_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(SAVINGS_GOAL_STORAGE_KEY, JSON.stringify(state.savingsGoal));
+}
+
+function openSavingsModal() {
+  if (!els.savingsModal) {
+    return;
+  }
+
+  els.savingsGoalName.value = state.savingsGoal.name;
+  els.savingsGoalAmount.value = state.savingsGoal.targetAmount > 0 ? String(state.savingsGoal.targetAmount) : "";
+  els.savingsBufferMonths.value = String(Math.max(0, Math.min(24, Math.round(state.savingsGoal.bufferMonths || 2))));
+  renderSavingsInsights();
+  els.savingsModal.hidden = false;
+}
+
+function closeSavingsModal() {
+  if (!els.savingsModal) {
+    return;
+  }
+
+  els.savingsModal.hidden = true;
+}
+
+function saveSavingsGoal() {
+  const name = String(els.savingsGoalName.value || "").trim();
+  const targetAmount = Number(els.savingsGoalAmount.value);
+  const bufferMonths = Math.round(Number(els.savingsBufferMonths.value));
+
+  if (!name) {
+    setImportMessage("Savings Goal Name Is Required.", true);
+    return;
+  }
+
+  if (!Number.isFinite(targetAmount) || targetAmount <= 0) {
+    setImportMessage("Savings Target Must Be Greater Than 0.", true);
+    return;
+  }
+
+  if (!Number.isFinite(bufferMonths) || bufferMonths < 0 || bufferMonths > 24) {
+    setImportMessage("Comfort Buffer Months Must Be Between 0 And 24.", true);
+    return;
+  }
+
+  state.savingsGoal = { name, targetAmount, bufferMonths };
+  persistSavingsGoal();
+  renderSavingsInsights();
+  setImportMessage("Savings Goal Saved.", false);
+}
+
+function getSavingsMetrics() {
+  let totalIncome = 0;
+  let totalSpending = 0;
+  const monthTotals = new Map();
+
+  for (const tx of state.transactions) {
+    const amount = Number(tx.amount || 0);
+    if (!Number.isFinite(amount)) {
+      continue;
+    }
+
+    if (tx.type === "income") {
+      totalIncome += amount;
+    } else {
+      totalSpending += amount;
+    }
+
+    const key = String(tx.date || "").slice(0, 7);
+    if (!monthTotals.has(key)) {
+      monthTotals.set(key, { income: 0, spending: 0 });
+    }
+
+    const bucket = monthTotals.get(key);
+    if (tx.type === "income") {
+      bucket.income += amount;
+    } else {
+      bucket.spending += amount;
+    }
+  }
+
+  const monthsTracked = monthTotals.size;
+  const currentSaved = totalIncome - totalSpending;
+  const avgMonthlyIncome = monthsTracked > 0 ? totalIncome / monthsTracked : 0;
+  const avgMonthlySpending = monthsTracked > 0 ? totalSpending / monthsTracked : 0;
+  const avgMonthlyNet = monthsTracked > 0 ? currentSaved / monthsTracked : 0;
+  const spendingRatio = totalIncome > 0 ? totalSpending / totalIncome : 0;
+
+  const target = Number(state.savingsGoal.targetAmount || 0);
+  const bufferMonths = Math.max(0, Math.min(24, Math.round(Number(state.savingsGoal.bufferMonths || 2))));
+  const comfortBuffer = avgMonthlySpending * bufferMonths;
+  const comfortableSaved = Math.max(0, currentSaved - comfortBuffer);
+  const requiredComfortTotal = target > 0 ? target + comfortBuffer : 0;
+  const progressRaw = target > 0 ? (comfortableSaved / target) * 100 : 0;
+  const progress = Math.max(0, Math.min(100, progressRaw));
+  const remaining = target > 0 ? Math.max(0, target - comfortableSaved) : 0;
+  const monthsToGoal = target > 0 && avgMonthlyNet > 0
+    ? Math.ceil(Math.max(0, requiredComfortTotal - currentSaved) / avgMonthlyNet)
+    : null;
+
+  return {
+    totalIncome,
+    totalSpending,
+    currentSaved,
+    avgMonthlyIncome,
+    avgMonthlySpending,
+    avgMonthlyNet,
+    spendingRatio,
+    monthsTracked,
+    target,
+    bufferMonths,
+    comfortBuffer,
+    comfortableSaved,
+    requiredComfortTotal,
+    progress,
+    remaining,
+    monthsToGoal
+  };
+}
+
+function renderSavingsInsights() {
+  if (!els.savingsSummaryCards || !els.savingsInsightsList) {
+    return;
+  }
+
+  const metrics = getSavingsMetrics();
+  const goalName = state.savingsGoal.name || "No Goal Set";
+  const targetText = metrics.target > 0 ? formatMoney(metrics.target) : "Set A Target";
+  const remainingText = metrics.target > 0 ? formatMoney(metrics.remaining) : "-";
+  const progressText = metrics.target > 0 ? `${Math.round(metrics.progress)}%` : "-";
+  const monthsText = metrics.monthsToGoal ? `${metrics.monthsToGoal} Month${metrics.monthsToGoal === 1 ? "" : "s"}` : "-";
+
+  els.savingsSummaryCards.innerHTML = `
+    <article class="savings-card"><p>Goal</p><h4>${escapeHtml(goalName)}</h4></article>
+    <article class="savings-card"><p>Target</p><h4>${targetText}</h4></article>
+    <article class="savings-card"><p>Net Saved (Raw)</p><h4>${formatMoney(metrics.currentSaved)}</h4></article>
+    <article class="savings-card"><p>Comfort Buffer</p><h4>${formatMoney(metrics.comfortBuffer)}</h4></article>
+    <article class="savings-card"><p>Safe To Use For Goal</p><h4>${formatMoney(metrics.comfortableSaved)}</h4></article>
+    <article class="savings-card"><p>Remaining</p><h4>${remainingText}</h4></article>
+    <article class="savings-card"><p>Progress</p><h4>${progressText}</h4></article>
+    <article class="savings-card"><p>Est. Time To Goal</p><h4>${monthsText}</h4></article>
+    <article class="savings-card"><p>Avg Monthly Income</p><h4>${formatMoney(metrics.avgMonthlyIncome)}</h4></article>
+    <article class="savings-card"><p>Avg Monthly Spending</p><h4>${formatMoney(metrics.avgMonthlySpending)}</h4></article>
+    <article class="savings-card"><p>Avg Monthly Net</p><h4>${formatMoney(metrics.avgMonthlyNet)}</h4></article>
+  `;
+
+  const insights = [];
+  if (metrics.monthsTracked === 0) {
+    insights.push("Add Transactions To Start Tracking Savings Insights.");
+  } else {
+    insights.push(`Tracking ${metrics.monthsTracked} Month${metrics.monthsTracked === 1 ? "" : "s"} Of Data.`);
+
+    if (metrics.avgMonthlyNet > 0) {
+      insights.push(`At Your Current Pace, You Add About ${formatMoney(metrics.avgMonthlyNet)} Per Month.`);
+    } else if (metrics.avgMonthlyNet < 0) {
+      insights.push(`Your Average Net Is ${formatMoney(metrics.avgMonthlyNet)} Per Month. Reduce Spending Or Increase Income To Reach The Goal.`);
+    } else {
+      insights.push("Your Monthly Net Is Around Break-Even. Any Spending Cuts Can Accelerate Progress.");
+    }
+
+    insights.push(`Comfort Rule: Reserve ${metrics.bufferMonths} Month${metrics.bufferMonths === 1 ? "" : "s"} Of Average Spending (${formatMoney(metrics.comfortBuffer)}) Before Counting Goal Progress.`);
+
+    if (metrics.spendingRatio >= 0.85) {
+      insights.push("Spending Is Using Most Of Income. Consider A Spending Cap For Top Expense Categories.");
+    } else if (metrics.spendingRatio <= 0.65) {
+      insights.push("Great Discipline: You Keep A Strong Gap Between Income And Spending.");
+    } else {
+      insights.push("You Are In A Balanced Zone. Small Weekly Cuts Can Still Improve Goal Speed.");
+    }
+
+    if (metrics.target > 0 && metrics.comfortableSaved >= metrics.target) {
+      insights.push("Goal Reached Comfortably. You Hit The Target While Keeping A Safety Buffer.");
+    } else if (metrics.target > 0 && metrics.monthsToGoal) {
+      insights.push(`Estimated Comfortable Completion: About ${metrics.monthsToGoal} Month${metrics.monthsToGoal === 1 ? "" : "s"} At Current Averages.`);
+    }
+  }
+
+  els.savingsInsightsList.innerHTML = insights.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
 }
 
 function onRecurrenceFrequencyChanged() {
@@ -323,7 +661,13 @@ function hydrateTripOptions() {
 }
 
 async function onCreateTrip() {
-  const rawName = window.prompt("Enter A New Trip Name:", "");
+  const rawName = await requestPrompt({
+    title: "Create New Trip",
+    message: "Enter A New Trip Name:",
+    confirmText: "Create",
+    cancelText: "Cancel",
+    initialValue: ""
+  });
   const name = String(rawName || "").trim();
   if (!name) {
     setImportMessage("Trip Creation Canceled.", false);
@@ -382,7 +726,108 @@ function onModalBackdropClick(event) {
 
   if (event.target === els.importPreviewModal) {
     closeImportPreviewModal();
+    return;
   }
+
+  if (event.target === els.appDialogModal) {
+    onAppDialogCancel();
+    return;
+  }
+
+  if (event.target === els.savingsModal) {
+    closeSavingsModal();
+  }
+}
+
+function openAppDialog(config) {
+  if (appDialogResolver) {
+    appDialogResolver(config.mode === "prompt" ? null : false);
+    appDialogResolver = null;
+  }
+
+  appDialogMode = config.mode || "confirm";
+  els.appDialogTitle.textContent = config.title || "Confirm Action";
+  els.appDialogMessage.textContent = config.message || "";
+  els.appDialogCancelButton.textContent = config.cancelText || "Cancel";
+  els.appDialogConfirmButton.textContent = config.confirmText || "Confirm";
+  els.appDialogConfirmButton.className = config.tone === "danger" ? "danger-btn" : "primary-btn";
+
+  if (appDialogMode === "prompt") {
+    els.appDialogInputWrap.hidden = false;
+    els.appDialogInput.value = config.initialValue || "";
+    els.appDialogInput.focus();
+    els.appDialogInput.select();
+  } else {
+    els.appDialogInputWrap.hidden = true;
+    els.appDialogInput.value = "";
+    els.appDialogConfirmButton.focus();
+  }
+
+  els.appDialogModal.hidden = false;
+
+  return new Promise((resolve) => {
+    appDialogResolver = resolve;
+  });
+}
+
+function closeAppDialog(result) {
+  if (!appDialogResolver) {
+    return;
+  }
+
+  const resolver = appDialogResolver;
+  appDialogResolver = null;
+  els.appDialogModal.hidden = true;
+  resolver(result);
+}
+
+function onAppDialogConfirm() {
+  if (appDialogMode === "prompt") {
+    closeAppDialog(els.appDialogInput.value);
+    return;
+  }
+
+  closeAppDialog(true);
+}
+
+function onAppDialogCancel() {
+  closeAppDialog(appDialogMode === "prompt" ? null : false);
+}
+
+function onAppDialogInputKeydown(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    onAppDialogConfirm();
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    onAppDialogCancel();
+  }
+}
+
+async function requestConfirm(options) {
+  return openAppDialog({
+    mode: "confirm",
+    title: options.title || "Confirm Action",
+    message: options.message || "Are You Sure?",
+    confirmText: options.confirmText || "Confirm",
+    cancelText: options.cancelText || "Cancel",
+    tone: options.tone || "danger"
+  });
+}
+
+async function requestPrompt(options) {
+  return openAppDialog({
+    mode: "prompt",
+    title: options.title || "Enter Value",
+    message: options.message || "Provide A Value",
+    confirmText: options.confirmText || "Save",
+    cancelText: options.cancelText || "Cancel",
+    tone: options.tone || "primary",
+    initialValue: options.initialValue || ""
+  });
 }
 
 function shiftMonth(delta) {
@@ -675,7 +1120,12 @@ async function onRecentAction(event) {
   }
 
   if (action === "delete") {
-    const confirmed = window.confirm("Delete This Transaction?");
+    const confirmed = await requestConfirm({
+      title: "Delete Transaction",
+      message: "Delete This Transaction?",
+      confirmText: "Delete",
+      tone: "danger"
+    });
     if (!confirmed) {
       return;
     }
@@ -719,7 +1169,12 @@ async function onMonthLogAction(event) {
   }
 
   if (action === "delete") {
-    const confirmed = window.confirm("Delete This Transaction?");
+    const confirmed = await requestConfirm({
+      title: "Delete Transaction",
+      message: "Delete This Transaction?",
+      confirmText: "Delete",
+      tone: "danger"
+    });
     if (!confirmed) {
       return;
     }
@@ -752,7 +1207,12 @@ function focusQuickAddWidget() {
 }
 
 async function clearAllData() {
-  const confirmReset = window.confirm("This Clears All Saved Dashboard Data. Continue?");
+  const confirmReset = await requestConfirm({
+    title: "Clear All Data",
+    message: "This Clears All Saved Dashboard Data. Continue?",
+    confirmText: "Clear Data",
+    tone: "danger"
+  });
   if (!confirmReset) {
     return;
   }
@@ -1040,6 +1500,7 @@ function render() {
   renderRecentEntries();
   renderMonthLog(monthTransactions);
   renderTripSummary();
+  renderSavingsInsights();
 }
 
 function getYearToDateTransactions() {
@@ -1398,6 +1859,151 @@ function openMonthLogModal() {
 
 function closeMonthLogModal() {
   els.monthLogModal.hidden = true;
+  state.monthLogDeleteMode = false;
+  state.monthLogSelectedIds.clear();
+  render();
+}
+
+function toggleMonthLogDeleteMode() {
+  state.monthLogDeleteMode = !state.monthLogDeleteMode;
+  if (!state.monthLogDeleteMode) {
+    state.monthLogSelectedIds.clear();
+  }
+  render();
+}
+
+function getFilteredMonthTransactions(monthTransactions) {
+  return monthTransactions.filter((tx) => {
+    const query = state.monthLogFilters.query.toLowerCase();
+    const matchesQuery = !query || String(tx.description || "").toLowerCase().includes(query);
+    const matchesType = state.monthLogFilters.type === "all" || tx.type === state.monthLogFilters.type;
+    const matchesParent = state.monthLogFilters.parent === "all" || normalizeLegacyParentCategory(tx.parentCategory) === state.monthLogFilters.parent;
+    const matchesSubcategory = state.monthLogFilters.subcategory === "all" || normalizeLegacyCategoryLabel(tx.category) === state.monthLogFilters.subcategory;
+    return matchesQuery && matchesType && matchesParent && matchesSubcategory;
+  });
+}
+
+function getOrderedMonthLogTransactions(monthTransactions) {
+  return monthTransactions
+    .slice()
+    .sort((a, b) => parseDateOnly(b.date).valueOf() - parseDateOnly(a.date).valueOf());
+}
+
+function syncMonthLogSelection(visibleTransactions) {
+  const visibleIds = new Set(visibleTransactions.map((tx) => tx.id));
+  for (const selectedId of state.monthLogSelectedIds) {
+    if (!visibleIds.has(selectedId)) {
+      state.monthLogSelectedIds.delete(selectedId);
+    }
+  }
+}
+
+function updateMonthLogBulkUi(visibleTransactions) {
+  if (!els.monthLogBulkActions || !els.monthLogDeleteModeButton || !els.monthLogDeleteSelectedButton || !els.monthLogSelectHeader) {
+    return;
+  }
+
+  if (state.monthLogDeleteMode) {
+    els.monthLogBulkActions.hidden = false;
+    els.monthLogDeleteModeButton.textContent = "Cancel";
+    els.monthLogSelectHeader.hidden = false;
+  } else {
+    els.monthLogBulkActions.hidden = true;
+    els.monthLogDeleteModeButton.textContent = "Delete";
+    els.monthLogSelectHeader.hidden = true;
+  }
+
+  const selectedCount = state.monthLogSelectedIds.size;
+  const totalVisible = visibleTransactions.length;
+  const canSelect = totalVisible > 0;
+
+  els.monthLogDeleteSelectedButton.textContent = `Delete Selected (${selectedCount})`;
+  els.monthLogDeleteSelectedButton.disabled = selectedCount === 0;
+  els.monthLogSelectAllButton.disabled = !canSelect || selectedCount === totalVisible;
+  els.monthLogDeselectAllButton.disabled = selectedCount === 0;
+}
+
+function selectAllMonthLogRows() {
+  const visible = getOrderedMonthLogTransactions(getFilteredMonthTransactions(getTransactionsForActiveMonth()));
+  state.monthLogSelectedIds = new Set(visible.map((tx) => tx.id));
+  render();
+}
+
+function deselectAllMonthLogRows() {
+  state.monthLogSelectedIds.clear();
+  render();
+}
+
+function onMonthLogSelectionChanged(event) {
+  const checkbox = event.target.closest("input[data-log-select-id]");
+  if (!checkbox) {
+    return;
+  }
+
+  const id = checkbox.dataset.logSelectId;
+  if (!id) {
+    return;
+  }
+
+  if (checkbox.checked) {
+    state.monthLogSelectedIds.add(id);
+  } else {
+    state.monthLogSelectedIds.delete(id);
+  }
+
+  updateMonthLogBulkUi(getOrderedMonthLogTransactions(getFilteredMonthTransactions(getTransactionsForActiveMonth())));
+}
+
+async function deleteSelectedMonthLogRows() {
+  const ids = [...state.monthLogSelectedIds];
+  if (!ids.length) {
+    return;
+  }
+
+  const confirmed = await requestConfirm({
+    title: "Delete Selected Transactions",
+    message: `Delete ${ids.length} Selected Transaction${ids.length === 1 ? "" : "s"}?`,
+    confirmText: "Delete Selected",
+    tone: "danger"
+  });
+  if (!confirmed) {
+    return;
+  }
+
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  for (const id of ids) {
+    try {
+      const response = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("Delete Failed");
+      }
+
+      deletedCount += 1;
+      state.monthLogSelectedIds.delete(id);
+      state.transactions = state.transactions.filter((tx) => tx.id !== id);
+      if (state.editingId === id) {
+        exitEditMode({ keepMessage: true });
+      }
+    } catch {
+      failedCount += 1;
+    }
+  }
+
+  if (deletedCount > 0) {
+    state.monthLogDeleteMode = false;
+    state.monthLogSelectedIds.clear();
+  }
+
+  render();
+
+  if (failedCount === 0) {
+    setMessage(`${deletedCount} Transaction${deletedCount === 1 ? "" : "s"} Deleted.`, false);
+    return;
+  }
+
+  setMessage(`Deleted ${deletedCount}. Failed To Delete ${failedCount}.`, true);
 }
 
 function openTripSummaryModal() {
@@ -1480,28 +2086,23 @@ function renderMonthLog(monthTransactions) {
 
   hydrateMonthLogFilterOptions(monthTransactions);
 
-  const filteredMonthTransactions = monthTransactions.filter((tx) => {
-    const query = state.monthLogFilters.query.toLowerCase();
-    const matchesQuery = !query || String(tx.description || "").toLowerCase().includes(query);
-    const matchesType = state.monthLogFilters.type === "all" || tx.type === state.monthLogFilters.type;
-    const matchesParent = state.monthLogFilters.parent === "all" || normalizeLegacyParentCategory(tx.parentCategory) === state.monthLogFilters.parent;
-    const matchesSubcategory = state.monthLogFilters.subcategory === "all" || normalizeLegacyCategoryLabel(tx.category) === state.monthLogFilters.subcategory;
-    return matchesQuery && matchesType && matchesParent && matchesSubcategory;
-  });
+  const filteredMonthTransactions = getFilteredMonthTransactions(monthTransactions);
+  const ordered = getOrderedMonthLogTransactions(filteredMonthTransactions);
+
+  syncMonthLogSelection(ordered);
+  updateMonthLogBulkUi(ordered);
 
   if (!filteredMonthTransactions.length) {
-    els.monthLogBody.innerHTML = '<tr><td colspan="7" class="empty-state">No Transactions In This Month.</td></tr>';
+    const colCount = state.monthLogDeleteMode ? 8 : 7;
+    els.monthLogBody.innerHTML = `<tr><td colspan="${colCount}" class="empty-state">No Transactions In This Month.</td></tr>`;
     els.monthLogTotals.innerHTML = '<p>Total Income: $0.00</p><p>Total Spending: $0.00</p><p>Net: $0.00</p>';
     return;
   }
 
-  const ordered = filteredMonthTransactions
-    .slice()
-    .sort((a, b) => parseDateOnly(b.date).valueOf() - parseDateOnly(a.date).valueOf());
-
   els.monthLogBody.innerHTML = ordered
     .map((tx) => `
       <tr>
+        ${state.monthLogDeleteMode ? `<td class="month-log-select-cell"><input type="checkbox" data-log-select-id="${escapeHtml(tx.id)}" ${state.monthLogSelectedIds.has(tx.id) ? "checked" : ""} /></td>` : ""}
         <td>${formatDateForDisplay(tx.date)}</td>
         <td>${escapeHtml(tx.description)}</td>
         <td>${escapeHtml(toTitleCase(tx.type))}</td>

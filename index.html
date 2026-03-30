@@ -12,7 +12,20 @@
 <body>
   <div class="bg-orb orb-1" aria-hidden="true"></div>
   <div class="bg-orb orb-2" aria-hidden="true"></div>
-  <div class="app-shell">
+  <div id="privacyGate" class="privacy-gate">
+    <section class="privacy-card" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+      <h1 id="privacyTitle">Pulse</h1>
+      <p>Enter PIN To Open Your Dashboard.</p>
+      <label class="privacy-field" for="privacyPinInput">
+        PIN
+        <input id="privacyPinInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off" />
+      </label>
+      <button id="privacyUnlockButton" class="primary-btn" type="button">Unlock</button>
+      <p id="privacyError" class="form-message" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <div class="app-shell" hidden>
     <header class="topbar">
       <div class="topbar-brand">
         <!-- <p class="eyebrow">Budget System</p> -->
@@ -29,6 +42,8 @@
           </div>
         </div>
 
+        <button id="openSavingsButton" class="ghost-btn nav-trigger" type="button">Savings</button>
+
         <div class="nav-menu">
           <button class="ghost-btn nav-trigger" type="button">Trips</button>
           <div class="nav-dropdown">
@@ -38,7 +53,7 @@
         </div>
 
         <div class="nav-menu">
-          <button class="ghost-btn nav-trigger" type="button">Import / Export</button>
+          <button class="ghost-btn nav-trigger" type="button">Data</button>
           <div class="nav-dropdown">
             <button id="importButton" class="ghost-btn" type="button">Import Data</button>
             <button id="exportButton" class="ghost-btn" type="button">Export Data</button>
@@ -243,9 +258,17 @@
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="monthLogTitle">
       <div class="modal-header">
         <h3 id="monthLogTitle">Monthly Transaction Log</h3>
-        <button id="closeMonthLogButton" class="ghost-btn" type="button">Close</button>
+        <div class="modal-header-actions">
+          <button id="monthLogDeleteModeButton" class="danger-btn" type="button">Delete</button>
+          <button id="closeMonthLogButton" class="ghost-btn" type="button">Close</button>
+        </div>
       </div>
       <p id="monthLogSubtitle" class="modal-subtitle">Transactions For Selected Month</p>
+      <div id="monthLogBulkActions" class="month-log-bulk-actions" hidden>
+        <button id="monthLogSelectAllButton" class="ghost-btn" type="button">Select All</button>
+        <button id="monthLogDeselectAllButton" class="ghost-btn" type="button">Deselect All</button>
+        <button id="monthLogDeleteSelectedButton" class="danger-btn" type="button">Delete Selected (0)</button>
+      </div>
       <div class="log-filters" aria-label="Transaction Log Filters">
         <label class="log-filter-field">
           Search
@@ -279,6 +302,7 @@
         <table class="modal-table">
           <thead>
             <tr>
+              <th id="monthLogSelectHeader" class="month-log-select-col" hidden>Select</th>
               <th>Date</th>
               <th>Description</th>
               <th>Type</th>
@@ -377,6 +401,59 @@
         <button id="confirmImportButton" class="primary-btn" type="button">Import Now</button>
         <button id="cancelImportPreviewButton" class="ghost-btn" type="button">Cancel</button>
       </div>
+    </section>
+  </div>
+
+  <div id="appDialogModal" class="modal-backdrop" hidden>
+    <section class="modal-card app-dialog-card" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
+      <div class="modal-header">
+        <h3 id="appDialogTitle">Confirm Action</h3>
+      </div>
+      <p id="appDialogMessage" class="modal-subtitle"></p>
+      <div id="appDialogInputWrap" class="log-filter-field" hidden>
+        <label for="appDialogInput"></label>
+        <input id="appDialogInput" type="text" autocomplete="off" />
+      </div>
+      <div class="form-actions import-preview-actions">
+        <button id="appDialogConfirmButton" class="primary-btn" type="button">Confirm</button>
+        <button id="appDialogCancelButton" class="ghost-btn" type="button">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="savingsModal" class="modal-backdrop" hidden>
+    <section class="modal-card savings-modal-card" role="dialog" aria-modal="true" aria-labelledby="savingsTitle">
+      <div class="modal-header">
+        <h3 id="savingsTitle">Savings Goal Tracker</h3>
+        <button id="closeSavingsButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p class="modal-subtitle">Track Your Progress, Spending Habits, And Monthly Averages To Stay On Course.</p>
+
+      <div class="savings-goal-grid" aria-label="Savings Goal Setup">
+        <label class="log-filter-field">
+          Goal Name
+          <input id="savingsGoalName" type="text" placeholder="ex: Emergency Fund" />
+        </label>
+        <label class="log-filter-field">
+          Target Amount
+          <input id="savingsGoalAmount" type="number" min="1" step="0.01" placeholder="ex: 5000" />
+        </label>
+        <label class="log-filter-field">
+          Comfort Buffer (Months)
+          <input id="savingsBufferMonths" type="number" min="0" max="24" step="1" value="2" />
+        </label>
+      </div>
+
+      <div class="form-actions import-preview-actions">
+        <button id="saveSavingsGoalButton" class="primary-btn" type="button">Save Goal</button>
+      </div>
+
+      <div id="savingsSummaryCards" class="savings-summary-grid"></div>
+
+      <article class="savings-insights-panel">
+        <h4>Insights</h4>
+        <ul id="savingsInsightsList"></ul>
+      </article>
     </section>
   </div>
 
