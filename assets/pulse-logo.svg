@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pulse logo">
+  <defs>
+    <linearGradient id="pulseGrad" x1="60" y1="60" x2="452" y2="452" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2300a9" />
+      <stop offset="1" stop-color="#ff00da" />
+    </linearGradient>
+    <style>
+      .ring {
+        fill: none;
+        stroke: url(#pulseGrad);
+        stroke-linecap: round;
+        stroke-width: 22;
+      }
+      .mark {
+        fill: url(#pulseGrad);
+      }
+    </style>
+  </defs>
+
+  <circle class="ring" cx="256" cy="256" r="188" stroke-dasharray="980" stroke-dashoffset="74" />
+  <circle class="ring" cx="256" cy="256" r="142" stroke-dasharray="742" stroke-dashoffset="118" />
+  <circle class="ring" cx="256" cy="256" r="98" stroke-dasharray="504" stroke-dashoffset="56" />
+
+  <path class="mark" d="M268 320h-24c-41 0-74-29-74-66v-8h40v8c0 16 15 28 34 28h24c19 0 34-12 34-28 0-15-12-24-38-30l-28-7c-45-11-66-34-66-70 0-40 33-68 80-68h6v-28h24v28h6c44 0 78 29 78 68v10h-40v-10c0-16-14-28-32-28h-18c-18 0-32 12-32 28 0 14 11 23 36 29l28 7c46 11 68 35 68 72 0 40-34 69-82 69h-4v30z" />
+</svg>

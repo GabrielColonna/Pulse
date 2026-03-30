@@ -69,6 +69,7 @@ const CATEGORY_MODEL = {
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
 const PRIVACY_PIN = "0307";
+const PRIVACY_GATE_ENABLED = false;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
 
 function normalizeApiBase(rawBase) {
@@ -241,6 +242,12 @@ async function init() {
 
 function initializePrivacyGate() {
   if (!els.privacyGate || !els.appShell || !els.privacyPinInput || !els.privacyUnlockButton) {
+    return true;
+  }
+
+  if (!PRIVACY_GATE_ENABLED) {
+    els.privacyGate.hidden = true;
+    els.appShell.hidden = false;
     return true;
   }
 
