@@ -53,6 +53,7 @@
           <div class="nav-dropdown">
             <button id="createTripButton" class="ghost-btn" type="button">Create Trip</button>
             <button id="openTripSummaryButton" class="ghost-btn" type="button">Trip Summary</button>
+            <button id="openManageTripsButton" class="ghost-btn" type="button">Manage Trips</button>
           </div>
         </div>
 
@@ -358,6 +359,28 @@
     </section>
   </div>
 
+  <div id="manageTripsModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="manageTripsTitle">
+      <div class="modal-header">
+        <h3 id="manageTripsTitle">Manage Trips</h3>
+        <button id="closeManageTripsButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p class="modal-subtitle">Edit Trip Names Or Delete Trips Individually</p>
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Trip</th>
+              <th>Linked Entries</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="manageTripsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
   <div id="importPreviewModal" class="modal-backdrop" hidden>
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="importPreviewTitle">
       <div class="modal-header">
@@ -422,6 +445,87 @@
       <div class="form-actions import-preview-actions">
         <button id="appDialogConfirmButton" class="primary-btn" type="button">Confirm</button>
         <button id="appDialogCancelButton" class="ghost-btn" type="button">Cancel</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="settingsModal" class="modal-backdrop" hidden>
+    <section class="modal-card settings-modal-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="modal-header">
+        <h3 id="settingsTitle">Category Settings</h3>
+        <button id="closeSettingsButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p class="modal-subtitle">Manage Parent Categories, Subcategories, And Suggestion Keywords With Full UI Controls.</p>
+
+      <div class="settings-editor-grid">
+        <section class="settings-editor-panel" aria-label="Category Structure Controls">
+          <div class="settings-control-row">
+            <label class="log-filter-field">
+              Transaction Type
+              <select id="settingsTypeSelect">
+                <option value="expense">Expense</option>
+                <option value="income">Income</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="settings-control-row settings-control-row-dual">
+            <label class="log-filter-field">
+              Parent Category
+              <select id="settingsParentSelect"></select>
+            </label>
+            <div class="settings-inline-actions">
+              <button id="addParentButton" class="ghost-btn" type="button">Add</button>
+              <button id="renameParentButton" class="ghost-btn" type="button">Rename</button>
+              <button id="deleteParentButton" class="danger-btn" type="button">Delete</button>
+            </div>
+          </div>
+
+          <div class="settings-control-row settings-control-row-dual">
+            <label class="log-filter-field">
+              Subcategory
+              <select id="settingsSubcategorySelect"></select>
+            </label>
+            <div class="settings-inline-actions">
+              <button id="addSubcategoryButton" class="ghost-btn" type="button">Add</button>
+              <button id="renameSubcategoryButton" class="ghost-btn" type="button">Rename</button>
+              <button id="deleteSubcategoryButton" class="danger-btn" type="button">Delete</button>
+            </div>
+          </div>
+
+          <div class="settings-control-row">
+            <label class="log-filter-field">
+              Suggestion Keywords
+              <div class="settings-keyword-input-row">
+                <input id="newKeywordInput" type="text" placeholder="Add New Keyword" />
+                <button id="addKeywordButton" class="primary-btn" type="button">Add Keyword</button>
+              </div>
+            </label>
+            <div id="settingsKeywordsList" class="settings-keywords-list"></div>
+          </div>
+        </section>
+
+        <section class="settings-editor-panel" aria-label="Category Variable Listing">
+          <h4>Current Variables</h4>
+          <div class="modal-table-wrap">
+            <table class="modal-table settings-model-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Parent</th>
+                  <th>Subcategory</th>
+                  <th>Keywords</th>
+                </tr>
+              </thead>
+              <tbody id="settingsModelTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div class="form-actions import-preview-actions">
+        <button id="resetCategoryModelButton" class="ghost-btn" type="button">Reset To Default</button>
+        <button id="saveCategoryModelButton" class="primary-btn" type="button">Save Categories</button>
       </div>
     </section>
   </div>

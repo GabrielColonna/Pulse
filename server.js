@@ -62,7 +62,7 @@ const categoryModel = {
     },
     {
       name: "Expenses",
-      subcategories: ["Memberships", "Car Payments", "Insurance", "Groceries", "Investments", "Losses"]
+      subcategories: ["Memberships", "Car Payments", "Insurance", "Necessities", "Groceries", "Investments", "Losses"]
     },
     {
       name: "Car",
@@ -125,6 +125,11 @@ const classifyRules = {
     },
     {
       parentCategory: "Expenses",
+      category: "Necessities",
+      keywords: ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"]
+    },
+    {
+      parentCategory: "Expenses",
       category: "Groceries",
       keywords: ["grocery", "walmart", "costco", "aldi", "target", "publix", "trader joe", "walgreens", "xeela"]
     },
@@ -136,7 +141,7 @@ const classifyRules = {
     {
       parentCategory: "Expenses",
       category: "Losses",
-      keywords: ["loss", "chargeback", "doctor", "copay", "parking ticket", "parking citation"]
+      keywords: ["loss", "chargeback", "parking ticket", "parking citation"]
     },
     {
       parentCategory: "Car",
@@ -254,6 +259,9 @@ const legacyAliases = {
   LSS: { parentCategory: "Expenses", category: "Losses" },
   GAS: { parentCategory: "Car", category: "Gas" },
   INS: { parentCategory: "Expenses", category: "Insurance" },
+  HEALTH: { parentCategory: "Expenses", category: "Necessities" },
+  MED: { parentCategory: "Expenses", category: "Necessities" },
+  DENTAL: { parentCategory: "Expenses", category: "Necessities" },
   OIL: { parentCategory: "Car", category: "Oil Changes" },
   TOL: { parentCategory: "Car", category: "Tolls" },
   PAR: { parentCategory: "Car", category: "Parking" },
@@ -307,6 +315,26 @@ db.serialize(() => {
   // Keep historical data consistent with current category naming.
   db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
   db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
+
+  // Fix incorrectly stored Necessities transactions (health-related expenses saved as Personal > Other)
+  const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
+  const healthPattern = new RegExp(healthKeywords.join("|"), "i");
+  
+  db.all(
+    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'",
+    (err, rows) => {
+      if (err || !rows) return;
+      
+      rows.forEach((row) => {
+        if (healthPattern.test(row.description)) {
+          db.run(
+            "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = ?",
+            [row.id]
+          );
+        }
+      });
+    }
+  );
 });
 
 function dbRun(sql, params = []) {
@@ -519,6 +547,12 @@ function normalizeCategory({ value, parentCategory, type, description }) {
         return { parentCategory: parentMatch.name, category: sub };
       }
     }
+  }
+
+  // If user provided both category AND parent, trust their input even if not found
+  // (e.g., legacy imports or future-proofing against category model changes)
+  if (rawCategory && rawParent) {
+    return { parentCategory: normalizedParent || rawParent, category: rawCategory };
   }
 
   return classifyCategory(description, type);
@@ -754,6 +788,85 @@ app.post("/api/trips", async (req, res) => {
   }
 });
 
+app.put("/api/trips/:id", async (req, res) => {
+  const { id } = req.params;
+  const cleanName = String(req.body?.name || "").trim();
+
+  if (!id || !cleanName) {
+    res.status(400).json({ error: "Trip Id And Name Are Required" });
+    return;
+  }
+
+  try {
+    const existing = await dbGet(
+      "SELECT id FROM trips WHERE id = ? AND archived = 0",
+      [id]
+    );
+
+    if (!existing) {
+      res.status(404).json({ error: "Trip Not Found" });
+      return;
+    }
+
+    const duplicate = await dbGet(
+      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND archived = 0",
+      [cleanName, id]
+    );
+
+    if (duplicate) {
+      res.status(409).json({ error: "Trip Name Already Exists" });
+      return;
+    }
+
+    await dbRun("UPDATE trips SET name = ? WHERE id = ?", [cleanName, id]);
+
+    const updated = await dbGet(
+      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+       FROM trips
+       WHERE id = ?`,
+      [id]
+    );
+
+    res.json(updated);
+  } catch {
+    res.status(500).json({ error: "Failed To Update Trip" });
+  }
+});
+
+app.delete("/api/trips/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    res.status(400).json({ error: "Trip Id Is Required" });
+    return;
+  }
+
+  try {
+    await dbRun("BEGIN TRANSACTION");
+
+    const detachResult = await dbRun(
+      "UPDATE transactions SET trip_id = '' WHERE trip_id = ?",
+      [id]
+    );
+
+    const deleteResult = await dbRun(
+      "DELETE FROM trips WHERE id = ?",
+      [id]
+    );
+
+    if (!deleteResult.changes) {
+      await dbRun("ROLLBACK");
+      res.status(404).json({ error: "Trip Not Found" });
+      return;
+    }
+
+    await dbRun("COMMIT");
+    res.json({ ok: true, detachedTransactions: detachResult.changes || 0 });
+  } catch {
+    await dbRun("ROLLBACK").catch(() => {});
+    res.status(500).json({ error: "Failed To Delete Trip" });
+  }
+});
+
 app.get("/api/transactions", async (req, res) => {
   try {
     const rows = await dbAll(
@@ -762,22 +875,7 @@ app.get("/api/transactions", async (req, res) => {
        ORDER BY created_at DESC`
     );
 
-    const normalizedRows = rows.map((row) => {
-      const normalized = normalizeCategory({
-        value: row.category,
-        parentCategory: row.parentCategory,
-        type: row.type,
-        description: row.description
-      });
-
-      return {
-        ...row,
-        parentCategory: normalized.parentCategory,
-        category: normalized.category
-      };
-    });
-
-    res.json(normalizedRows);
+    res.json(rows);
   } catch {
     res.status(500).json({ error: "Failed To Load Transactions" });
   }

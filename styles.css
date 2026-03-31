@@ -282,6 +282,14 @@ body {
   font-size: 0.9rem;
 }
 
+.nav-menu.nav-open .nav-dropdown {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
 h1,
 h2,
 h3 {
@@ -999,6 +1007,97 @@ select {
   flex: 1;
 }
 
+.settings-modal-card {
+  width: min(980px, 96vw);
+}
+
+.settings-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 12px;
+}
+
+.settings-editor-panel {
+  border: 1px solid #342c58;
+  border-radius: 10px;
+  padding: 10px;
+  background: #17132a;
+}
+
+.settings-editor-panel h4 {
+  margin: 0 0 8px;
+}
+
+.settings-control-row {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.settings-control-row:last-child {
+  margin-bottom: 0;
+}
+
+.settings-control-row-dual {
+  grid-template-columns: minmax(160px, 1fr) auto;
+  align-items: end;
+}
+
+.settings-inline-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.settings-keyword-input-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto;
+  gap: 8px;
+}
+
+.settings-keywords-list {
+  border: 1px solid #43386d;
+  border-radius: 10px;
+  min-height: 44px;
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: #120f22;
+}
+
+.settings-keyword-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid #5f4f98;
+  background: rgba(98, 71, 158, 0.24);
+  color: #e7dbff;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
+.settings-keyword-chip button {
+  border: 0;
+  background: transparent;
+  color: #ffd3dd;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0;
+  line-height: 1;
+}
+
+.settings-model-table td {
+  vertical-align: top;
+}
+
+.settings-keyword-cell {
+  color: #d8c5ff;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .savings-modal-card {
   width: min(920px, 96vw);
 }
@@ -1157,6 +1256,12 @@ select {
   background: rgba(255, 159, 26, 0.2);
   color: #ff9f1a;
   border-color: rgba(255, 159, 26, 0.58);
+}
+
+.category-chip.parent-chip-necessities {
+  background: rgba(29, 212, 192, 0.2);
+  color: #1dd4c0;
+  border-color: rgba(29, 212, 192, 0.58);
 }
 
 .category-chip.parent-chip-default {
@@ -1439,6 +1544,18 @@ select:focus {
 
   .nav-menu::after {
     display: none;
+  }
+
+  .settings-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-control-row-dual {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-keyword-input-row {
+    grid-template-columns: 1fr;
   }
 
   .kpi-grid {

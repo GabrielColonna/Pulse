@@ -1,4 +1,4 @@
-const CATEGORY_MODEL = {
+const DEFAULT_CATEGORY_MODEL = {
   income: [
     {
       name: "Income",
@@ -30,9 +30,10 @@ const CATEGORY_MODEL = {
         { name: "Memberships", keywords: ["membership", "subscription", "gym", "icloud", "planet fitness", "coursera", "microsoft 365", "pf monthly", "annual fee"] },
         { name: "Car Payments", keywords: ["car payment", "auto loan", "pay off car"] },
         { name: "Insurance", keywords: ["insurance", "geico"] },
+        { name: "Necessities", keywords: ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"] },
         { name: "Groceries", keywords: ["grocery", "walmart", "costco", "aldi", "target", "publix", "trader joe", "walgreens", "xeela"] },
         { name: "Investments", keywords: ["investment", "stock", "crypto", "savings", "wealthfront", "xrp"] },
-        { name: "Losses", keywords: ["loss", "chargeback", "doctor", "copay", "parking ticket", "parking citation"] }
+        { name: "Losses", keywords: ["loss", "chargeback", "parking ticket", "parking citation"] }
       ]
     },
     {
@@ -66,8 +67,11 @@ const CATEGORY_MODEL = {
   ]
 };
 
+let CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
+const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
 const PRIVACY_PIN = "0307";
 const PRIVACY_GATE_ENABLED = false;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
@@ -126,6 +130,12 @@ let importMessageTimeoutId = null;
 let appDialogResolver = null;
 let appDialogMode = "confirm";
 let hasInitializedDashboard = false;
+const settingsState = {
+  type: "expense",
+  parentName: "",
+  subcategoryName: "",
+  draftModel: null
+};
 
 const els = {
   privacyGate: document.getElementById("privacyGate"),
@@ -136,6 +146,23 @@ const els = {
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
+  settingsModal: document.getElementById("settingsModal"),
+  closeSettingsButton: document.getElementById("closeSettingsButton"),
+  settingsTypeSelect: document.getElementById("settingsTypeSelect"),
+  settingsParentSelect: document.getElementById("settingsParentSelect"),
+  settingsSubcategorySelect: document.getElementById("settingsSubcategorySelect"),
+  addParentButton: document.getElementById("addParentButton"),
+  renameParentButton: document.getElementById("renameParentButton"),
+  deleteParentButton: document.getElementById("deleteParentButton"),
+  addSubcategoryButton: document.getElementById("addSubcategoryButton"),
+  renameSubcategoryButton: document.getElementById("renameSubcategoryButton"),
+  deleteSubcategoryButton: document.getElementById("deleteSubcategoryButton"),
+  newKeywordInput: document.getElementById("newKeywordInput"),
+  addKeywordButton: document.getElementById("addKeywordButton"),
+  settingsKeywordsList: document.getElementById("settingsKeywordsList"),
+  settingsModelTableBody: document.getElementById("settingsModelTableBody"),
+  saveCategoryModelButton: document.getElementById("saveCategoryModelButton"),
+  resetCategoryModelButton: document.getElementById("resetCategoryModelButton"),
   form: document.getElementById("entryForm"),
   description: document.getElementById("description"),
   amount: document.getElementById("amount"),
@@ -151,6 +178,7 @@ const els = {
   openSavingsButton: document.getElementById("openSavingsButton"),
   createTripButton: document.getElementById("createTripButton"),
   openTripSummaryButton: document.getElementById("openTripSummaryButton"),
+  openManageTripsButton: document.getElementById("openManageTripsButton"),
   submitButton: document.getElementById("submitButton"),
   cancelEditButton: document.getElementById("cancelEditButton"),
   formMessage: document.getElementById("formMessage"),
@@ -193,6 +221,9 @@ const els = {
   tripSummarySubtitle: document.getElementById("tripSummarySubtitle"),
   tripSummaryBody: document.getElementById("tripSummaryBody"),
   tripSummaryTotals: document.getElementById("tripSummaryTotals"),
+  manageTripsModal: document.getElementById("manageTripsModal"),
+  closeManageTripsButton: document.getElementById("closeManageTripsButton"),
+  manageTripsBody: document.getElementById("manageTripsBody"),
   importPreviewModal: document.getElementById("importPreviewModal"),
   closeImportPreviewButton: document.getElementById("closeImportPreviewButton"),
   cancelImportPreviewButton: document.getElementById("cancelImportPreviewButton"),
@@ -309,6 +340,7 @@ async function initializeDashboard() {
 
   hasInitializedDashboard = true;
   hydrateSidebarState();
+  hydrateCategoryModel();
   hydrateSavingsGoal();
   setDefaultDate();
   populateParentCategories("expense");
@@ -334,9 +366,64 @@ function wireEvents() {
   if (els.openSettingsButton) {
     els.openSettingsButton.addEventListener("click", onOpenSettings);
   }
+  if (els.closeSettingsButton) {
+    els.closeSettingsButton.addEventListener("click", closeSettingsModal);
+  }
+  if (els.settingsTypeSelect) {
+    els.settingsTypeSelect.addEventListener("change", onSettingsTypeChange);
+  }
+  if (els.settingsParentSelect) {
+    els.settingsParentSelect.addEventListener("change", onSettingsParentChange);
+  }
+  if (els.settingsSubcategorySelect) {
+    els.settingsSubcategorySelect.addEventListener("change", onSettingsSubcategoryChange);
+  }
+  if (els.addParentButton) {
+    els.addParentButton.addEventListener("click", onAddParentCategory);
+  }
+  if (els.renameParentButton) {
+    els.renameParentButton.addEventListener("click", onRenameParentCategory);
+  }
+  if (els.deleteParentButton) {
+    els.deleteParentButton.addEventListener("click", onDeleteParentCategory);
+  }
+  if (els.addSubcategoryButton) {
+    els.addSubcategoryButton.addEventListener("click", onAddSubcategory);
+  }
+  if (els.renameSubcategoryButton) {
+    els.renameSubcategoryButton.addEventListener("click", onRenameSubcategory);
+  }
+  if (els.deleteSubcategoryButton) {
+    els.deleteSubcategoryButton.addEventListener("click", onDeleteSubcategory);
+  }
+  if (els.addKeywordButton) {
+    els.addKeywordButton.addEventListener("click", onAddKeyword);
+  }
+  if (els.settingsKeywordsList) {
+    els.settingsKeywordsList.addEventListener("click", onSettingsKeywordAction);
+  }
+  if (els.saveCategoryModelButton) {
+    els.saveCategoryModelButton.addEventListener("click", saveCategoryModelFromUi);
+  }
+  if (els.resetCategoryModelButton) {
+    els.resetCategoryModelButton.addEventListener("click", resetCategoryModelToDefault);
+  }
   if (els.openSavingsButton) {
     els.openSavingsButton.addEventListener("click", openSavingsModal);
   }
+
+  // Setup nav menu toggle functionality
+  wireNavMenuToggles();
+
+  // Close menus when clicking outside
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".nav-menu") && !event.target.closest(".nav-trigger")) {
+      document.querySelectorAll(".nav-menu.nav-open").forEach((menu) => {
+        menu.classList.remove("nav-open");
+      });
+    }
+  });
+
   els.description.addEventListener("input", suggestCategoryFromDescription);
   els.entryType.addEventListener("change", onTypeChange);
   els.parentCategorySelect.addEventListener("change", onParentCategoryChange);
@@ -354,14 +441,26 @@ function wireEvents() {
   els.nextMonthButton.addEventListener("click", () => shiftMonth(-1));
   els.openMonthLogButton.addEventListener("click", openMonthLogModal);
   els.openTripSummaryButton.addEventListener("click", openTripSummaryModal);
+  if (els.openManageTripsButton) {
+    els.openManageTripsButton.addEventListener("click", openManageTripsModal);
+  }
   els.closeMonthLogButton.addEventListener("click", closeMonthLogModal);
   els.monthLogDeleteModeButton.addEventListener("click", toggleMonthLogDeleteMode);
   els.monthLogSelectAllButton.addEventListener("click", selectAllMonthLogRows);
   els.monthLogDeselectAllButton.addEventListener("click", deselectAllMonthLogRows);
   els.monthLogDeleteSelectedButton.addEventListener("click", deleteSelectedMonthLogRows);
   els.closeTripSummaryButton.addEventListener("click", closeTripSummaryModal);
+  if (els.closeManageTripsButton) {
+    els.closeManageTripsButton.addEventListener("click", closeManageTripsModal);
+  }
   els.monthLogModal.addEventListener("click", onModalBackdropClick);
   els.tripSummaryModal.addEventListener("click", onModalBackdropClick);
+  if (els.manageTripsModal) {
+    els.manageTripsModal.addEventListener("click", onModalBackdropClick);
+  }
+  if (els.settingsModal) {
+    els.settingsModal.addEventListener("click", onModalBackdropClick);
+  }
   els.importPreviewModal.addEventListener("click", onModalBackdropClick);
   els.appDialogModal.addEventListener("click", onModalBackdropClick);
   if (els.savingsModal) {
@@ -394,6 +493,32 @@ function wireEvents() {
   els.resetMonthLogFilters.addEventListener("click", resetMonthLogFilters);
   els.monthLogBody.addEventListener("click", onMonthLogAction);
   els.monthLogBody.addEventListener("change", onMonthLogSelectionChanged);
+  if (els.manageTripsBody) {
+    els.manageTripsBody.addEventListener("click", onManageTripsAction);
+  }
+}
+
+function wireNavMenuToggles() {
+  const navMenus = document.querySelectorAll(".nav-menu");
+  
+  navMenus.forEach((menu) => {
+    const trigger = menu.querySelector(".nav-trigger");
+    if (!trigger) return;
+    
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      
+      // Close all other open menus
+      navMenus.forEach((otherMenu) => {
+        if (otherMenu !== menu) {
+          otherMenu.classList.remove("nav-open");
+        }
+      });
+      
+      // Toggle current menu
+      menu.classList.toggle("nav-open");
+    });
+  });
 }
 
 function hydrateSidebarState() {
@@ -431,7 +556,497 @@ function onOpenUserProfile() {
 }
 
 function onOpenSettings() {
-  setImportMessage("Settings Panel Is Coming Soon. This Slot Is Ready For Preferences, Theme, And Security.", false);
+  openSettingsModal();
+}
+
+function isValidCategoryModel(model) {
+  if (!model || typeof model !== "object") {
+    return false;
+  }
+
+  for (const type of ["income", "expense"]) {
+    if (!Array.isArray(model[type]) || !model[type].length) {
+      return false;
+    }
+
+    for (const group of model[type]) {
+      if (!group || typeof group !== "object" || !String(group.name || "").trim()) {
+        return false;
+      }
+
+      if (!Array.isArray(group.subcategories) || !group.subcategories.length) {
+        return false;
+      }
+
+      for (const sub of group.subcategories) {
+        if (!sub || typeof sub !== "object" || !String(sub.name || "").trim()) {
+          return false;
+        }
+        if (!Array.isArray(sub.keywords)) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+function normalizeCategoryModelShape(model) {
+  return {
+    income: (model.income || []).map((group) => ({
+      name: String(group.name || "").trim(),
+      subcategories: (group.subcategories || []).map((sub) => ({
+        name: String(sub.name || "").trim(),
+        keywords: (sub.keywords || []).map((keyword) => String(keyword || "").trim()).filter(Boolean)
+      }))
+    })),
+    expense: (model.expense || []).map((group) => ({
+      name: String(group.name || "").trim(),
+      subcategories: (group.subcategories || []).map((sub) => ({
+        name: String(sub.name || "").trim(),
+        keywords: (sub.keywords || []).map((keyword) => String(keyword || "").trim()).filter(Boolean)
+      }))
+    }))
+  };
+}
+
+function hydrateCategoryModel() {
+  try {
+    const raw = window.localStorage.getItem(CATEGORY_MODEL_STORAGE_KEY);
+    if (!raw) {
+      CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+      return;
+    }
+
+    const parsed = normalizeCategoryModelShape(JSON.parse(raw));
+    if (!isValidCategoryModel(parsed)) {
+      CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+      return;
+    }
+
+    CATEGORY_MODEL = parsed;
+  } catch {
+    CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+  }
+}
+
+function openSettingsModal() {
+  if (!els.settingsModal) {
+    return;
+  }
+
+  settingsState.draftModel = JSON.parse(JSON.stringify(CATEGORY_MODEL));
+  settingsState.type = settingsState.draftModel.expense?.length ? "expense" : "income";
+  settingsState.parentName = "";
+  settingsState.subcategoryName = "";
+
+  renderSettingsEditor();
+  els.settingsModal.hidden = false;
+}
+
+function closeSettingsModal() {
+  if (!els.settingsModal) {
+    return;
+  }
+
+  els.settingsModal.hidden = true;
+}
+
+function getSettingsGroups(type) {
+  return settingsState.draftModel?.[type] || [];
+}
+
+function syncSettingsSelections() {
+  const groups = getSettingsGroups(settingsState.type);
+  if (!groups.length) {
+    settingsState.parentName = "";
+    settingsState.subcategoryName = "";
+    return;
+  }
+
+  if (!groups.some((group) => group.name === settingsState.parentName)) {
+    settingsState.parentName = groups[0].name;
+  }
+
+  const group = groups.find((item) => item.name === settingsState.parentName);
+  const subs = group?.subcategories || [];
+  if (!subs.length) {
+    settingsState.subcategoryName = "";
+    return;
+  }
+
+  if (!subs.some((sub) => sub.name === settingsState.subcategoryName)) {
+    settingsState.subcategoryName = subs[0].name;
+  }
+}
+
+function getSelectedSettingsGroup() {
+  const groups = getSettingsGroups(settingsState.type);
+  return groups.find((group) => group.name === settingsState.parentName) || null;
+}
+
+function getSelectedSettingsSubcategory() {
+  const group = getSelectedSettingsGroup();
+  if (!group) {
+    return null;
+  }
+
+  return group.subcategories.find((sub) => sub.name === settingsState.subcategoryName) || null;
+}
+
+function renderSettingsSelectors() {
+  if (!els.settingsTypeSelect || !els.settingsParentSelect || !els.settingsSubcategorySelect) {
+    return;
+  }
+
+  els.settingsTypeSelect.value = settingsState.type;
+  const groups = getSettingsGroups(settingsState.type);
+
+  els.settingsParentSelect.innerHTML = groups
+    .map((group) => `<option value="${escapeHtml(group.name)}">${escapeHtml(group.name)}</option>`)
+    .join("");
+  els.settingsParentSelect.value = settingsState.parentName;
+
+  const selectedGroup = getSelectedSettingsGroup();
+  const subcategories = selectedGroup?.subcategories || [];
+  els.settingsSubcategorySelect.innerHTML = subcategories
+    .map((sub) => `<option value="${escapeHtml(sub.name)}">${escapeHtml(sub.name)}</option>`)
+    .join("");
+  els.settingsSubcategorySelect.value = settingsState.subcategoryName;
+}
+
+function renderSettingsKeywords() {
+  if (!els.settingsKeywordsList) {
+    return;
+  }
+
+  const selectedSub = getSelectedSettingsSubcategory();
+  if (!selectedSub) {
+    els.settingsKeywordsList.innerHTML = '<span class="empty-state">Select A Subcategory To Manage Keywords.</span>';
+    return;
+  }
+
+  const keywords = selectedSub.keywords || [];
+  if (!keywords.length) {
+    els.settingsKeywordsList.innerHTML = '<span class="empty-state">No Keywords Yet.</span>';
+    return;
+  }
+
+  els.settingsKeywordsList.innerHTML = keywords
+    .map((keyword) => `<span class="settings-keyword-chip">${escapeHtml(keyword)}<button type="button" data-action="remove-keyword" data-keyword="${escapeHtml(keyword)}">x</button></span>`)
+    .join("");
+}
+
+function renderSettingsVariablesTable() {
+  if (!els.settingsModelTableBody) {
+    return;
+  }
+
+  const rows = [];
+  for (const type of ["income", "expense"]) {
+    for (const group of getSettingsGroups(type)) {
+      for (const sub of group.subcategories) {
+        rows.push(`
+          <tr>
+            <td>${escapeHtml(toTitleCase(type))}</td>
+            <td>${escapeHtml(group.name)}</td>
+            <td>${escapeHtml(sub.name)}</td>
+            <td class="settings-keyword-cell">${escapeHtml((sub.keywords || []).join(", ") || "-")}</td>
+          </tr>
+        `);
+      }
+    }
+  }
+
+  els.settingsModelTableBody.innerHTML = rows.length
+    ? rows.join("")
+    : '<tr><td colspan="4" class="empty-state">No Variables Configured.</td></tr>';
+}
+
+function renderSettingsEditor() {
+  if (!settingsState.draftModel) {
+    return;
+  }
+
+  syncSettingsSelections();
+  renderSettingsSelectors();
+  renderSettingsKeywords();
+  renderSettingsVariablesTable();
+}
+
+function onSettingsTypeChange() {
+  settingsState.type = els.settingsTypeSelect?.value === "income" ? "income" : "expense";
+  settingsState.parentName = "";
+  settingsState.subcategoryName = "";
+  renderSettingsEditor();
+}
+
+function onSettingsParentChange() {
+  settingsState.parentName = String(els.settingsParentSelect?.value || "");
+  settingsState.subcategoryName = "";
+  renderSettingsEditor();
+}
+
+function onSettingsSubcategoryChange() {
+  settingsState.subcategoryName = String(els.settingsSubcategorySelect?.value || "");
+  renderSettingsKeywords();
+}
+
+async function onAddParentCategory() {
+  const rawName = await requestPrompt({
+    title: "Add Parent Category",
+    message: "Enter Parent Category Name:",
+    confirmText: "Add",
+    cancelText: "Cancel",
+    initialValue: ""
+  });
+
+  const name = String(rawName || "").trim();
+  if (!name) {
+    return;
+  }
+
+  const groups = getSettingsGroups(settingsState.type);
+  if (groups.some((group) => group.name.toLowerCase() === name.toLowerCase())) {
+    setImportMessage("Parent Category Already Exists.", true);
+    return;
+  }
+
+  groups.push({ name, subcategories: [{ name: "Other", keywords: [] }] });
+  settingsState.parentName = name;
+  settingsState.subcategoryName = "Other";
+  renderSettingsEditor();
+}
+
+async function onRenameParentCategory() {
+  const group = getSelectedSettingsGroup();
+  if (!group) {
+    return;
+  }
+
+  const rawName = await requestPrompt({
+    title: "Rename Parent Category",
+    message: "Enter New Parent Category Name:",
+    confirmText: "Save",
+    cancelText: "Cancel",
+    initialValue: group.name
+  });
+
+  const nextName = String(rawName || "").trim();
+  if (!nextName || nextName === group.name) {
+    return;
+  }
+
+  const groups = getSettingsGroups(settingsState.type);
+  if (groups.some((item) => item !== group && item.name.toLowerCase() === nextName.toLowerCase())) {
+    setImportMessage("Parent Category Already Exists.", true);
+    return;
+  }
+
+  group.name = nextName;
+  settingsState.parentName = nextName;
+  renderSettingsEditor();
+}
+
+async function onDeleteParentCategory() {
+  const groups = getSettingsGroups(settingsState.type);
+  const group = getSelectedSettingsGroup();
+  if (!group) {
+    return;
+  }
+
+  if (groups.length <= 1) {
+    setImportMessage("At Least One Parent Category Is Required Per Type.", true);
+    return;
+  }
+
+  const confirmed = await requestConfirm({
+    title: "Delete Parent Category",
+    message: `Delete ${group.name} And All Its Subcategories?`,
+    confirmText: "Delete",
+    tone: "danger"
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  settingsState.draftModel[settingsState.type] = groups.filter((item) => item !== group);
+  settingsState.parentName = "";
+  settingsState.subcategoryName = "";
+  renderSettingsEditor();
+}
+
+async function onAddSubcategory() {
+  const group = getSelectedSettingsGroup();
+  if (!group) {
+    return;
+  }
+
+  const rawName = await requestPrompt({
+    title: "Add Subcategory",
+    message: "Enter Subcategory Name:",
+    confirmText: "Add",
+    cancelText: "Cancel",
+    initialValue: ""
+  });
+
+  const name = String(rawName || "").trim();
+  if (!name) {
+    return;
+  }
+
+  if (group.subcategories.some((sub) => sub.name.toLowerCase() === name.toLowerCase())) {
+    setImportMessage("Subcategory Already Exists In This Parent.", true);
+    return;
+  }
+
+  group.subcategories.push({ name, keywords: [] });
+  settingsState.subcategoryName = name;
+  renderSettingsEditor();
+}
+
+async function onRenameSubcategory() {
+  const group = getSelectedSettingsGroup();
+  const sub = getSelectedSettingsSubcategory();
+  if (!group || !sub) {
+    return;
+  }
+
+  const rawName = await requestPrompt({
+    title: "Rename Subcategory",
+    message: "Enter New Subcategory Name:",
+    confirmText: "Save",
+    cancelText: "Cancel",
+    initialValue: sub.name
+  });
+
+  const nextName = String(rawName || "").trim();
+  if (!nextName || nextName === sub.name) {
+    return;
+  }
+
+  if (group.subcategories.some((item) => item !== sub && item.name.toLowerCase() === nextName.toLowerCase())) {
+    setImportMessage("Subcategory Already Exists In This Parent.", true);
+    return;
+  }
+
+  sub.name = nextName;
+  settingsState.subcategoryName = nextName;
+  renderSettingsEditor();
+}
+
+async function onDeleteSubcategory() {
+  const group = getSelectedSettingsGroup();
+  const sub = getSelectedSettingsSubcategory();
+  if (!group || !sub) {
+    return;
+  }
+
+  if (group.subcategories.length <= 1) {
+    setImportMessage("At Least One Subcategory Is Required Per Parent.", true);
+    return;
+  }
+
+  const confirmed = await requestConfirm({
+    title: "Delete Subcategory",
+    message: `Delete ${sub.name}?`,
+    confirmText: "Delete",
+    tone: "danger"
+  });
+
+  if (!confirmed) {
+    return;
+  }
+
+  group.subcategories = group.subcategories.filter((item) => item !== sub);
+  settingsState.subcategoryName = "";
+  renderSettingsEditor();
+}
+
+function onAddKeyword() {
+  const sub = getSelectedSettingsSubcategory();
+  if (!sub || !els.newKeywordInput) {
+    return;
+  }
+
+  const keyword = String(els.newKeywordInput.value || "").trim().toLowerCase();
+  if (!keyword) {
+    return;
+  }
+
+  if (sub.keywords.some((item) => item.toLowerCase() === keyword)) {
+    setImportMessage("Keyword Already Exists For This Subcategory.", true);
+    return;
+  }
+
+  sub.keywords.push(keyword);
+  els.newKeywordInput.value = "";
+  renderSettingsEditor();
+}
+
+function onSettingsKeywordAction(event) {
+  const button = event.target.closest("button[data-action='remove-keyword']");
+  if (!button) {
+    return;
+  }
+
+  const keyword = String(button.dataset.keyword || "").trim().toLowerCase();
+  if (!keyword) {
+    return;
+  }
+
+  const sub = getSelectedSettingsSubcategory();
+  if (!sub) {
+    return;
+  }
+
+  sub.keywords = sub.keywords.filter((item) => item.toLowerCase() !== keyword);
+  renderSettingsEditor();
+}
+
+function saveCategoryModelFromUi() {
+  const parsed = normalizeCategoryModelShape(settingsState.draftModel || {});
+
+  if (!isValidCategoryModel(parsed)) {
+    setImportMessage("Category Model Must Include Income/Expense Groups With Named Subcategories.", true);
+    return;
+  }
+
+  CATEGORY_MODEL = parsed;
+  window.localStorage.setItem(CATEGORY_MODEL_STORAGE_KEY, JSON.stringify(CATEGORY_MODEL));
+
+  const activeType = els.entryType?.value || "expense";
+  const selectedParent = els.parentCategorySelect?.value;
+  populateParentCategories(activeType, selectedParent);
+  suggestCategoryFromDescription();
+  render();
+
+  closeSettingsModal();
+  setImportMessage("Category Settings Saved.", false);
+}
+
+function resetCategoryModelToDefault() {
+  CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+  window.localStorage.removeItem(CATEGORY_MODEL_STORAGE_KEY);
+
+  settingsState.draftModel = JSON.parse(JSON.stringify(CATEGORY_MODEL));
+  settingsState.parentName = "";
+  settingsState.subcategoryName = "";
+  if (!settingsState.type) {
+    settingsState.type = "expense";
+  }
+
+  if (els.settingsModal && !els.settingsModal.hidden) {
+    renderSettingsEditor();
+  }
+
+  const activeType = els.entryType?.value || "expense";
+  populateParentCategories(activeType);
+  suggestCategoryFromDescription();
+  render();
+  setImportMessage("Category Settings Reset To Default.", false);
 }
 
 function hydrateSavingsGoal() {
@@ -751,6 +1366,16 @@ function onModalBackdropClick(event) {
 
   if (event.target === els.tripSummaryModal) {
     closeTripSummaryModal();
+    return;
+  }
+
+  if (event.target === els.manageTripsModal) {
+    closeManageTripsModal();
+    return;
+  }
+
+  if (event.target === els.settingsModal) {
+    closeSettingsModal();
     return;
   }
 
@@ -1116,7 +1741,7 @@ function resetForm() {
   els.form.reset();
   setDefaultDate();
   els.entryType.value = "expense";
-  populateParentCategories("expense");
+  populateParentCategories("expense", "Expenses");
   els.tripSelect.value = "";
   if (els.tripAccordion) {
     els.tripAccordion.open = false;
@@ -1127,7 +1752,6 @@ function resetForm() {
   if (els.recurrenceAccordion) {
     els.recurrenceAccordion.open = false;
   }
-  suggestCategoryFromDescription();
 }
 
 async function onRecentAction(event) {
@@ -1867,7 +2491,7 @@ function renderRecentEntries() {
         <div class="recent-main">
           <strong>${escapeHtml(tx.description)}</strong>
           <div class="recent-meta">
-            <span class="recent-date">${formatDateForDisplay(tx.date)}</span>
+            <span class="recent-date">${formatDateForDisplay(tx.date)} -</span>
             ${tx.category ? `<span class="recent-subcategory">${escapeHtml(normalizedSubcategory)}</span>` : ""}
           </div>
         </div>
@@ -2041,8 +2665,153 @@ function openTripSummaryModal() {
   renderTripSummary();
 }
 
+function openManageTripsModal() {
+  if (!els.manageTripsModal) {
+    return;
+  }
+
+  els.manageTripsModal.hidden = false;
+  renderManageTrips();
+}
+
+function closeManageTripsModal() {
+  if (!els.manageTripsModal) {
+    return;
+  }
+
+  els.manageTripsModal.hidden = true;
+}
+
 function closeTripSummaryModal() {
   els.tripSummaryModal.hidden = true;
+}
+
+function renderManageTrips() {
+  if (!els.manageTripsBody) {
+    return;
+  }
+
+  if (!state.trips.length) {
+    els.manageTripsBody.innerHTML = '<tr><td colspan="3" class="empty-state">No Trips Found.</td></tr>';
+    return;
+  }
+
+  const tripUsage = new Map();
+  for (const tx of state.transactions) {
+    const tripId = String(tx.tripId || "").trim();
+    if (!tripId) {
+      continue;
+    }
+    tripUsage.set(tripId, (tripUsage.get(tripId) || 0) + 1);
+  }
+
+  els.manageTripsBody.innerHTML = state.trips
+    .slice()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+    .map((trip) => {
+      const usageCount = tripUsage.get(trip.id) || 0;
+      return `
+      <tr>
+        <td>${escapeHtml(trip.name)}</td>
+        <td>${usageCount}</td>
+        <td>
+          <div class="item-actions">
+            <button class="mini-btn edit-btn" type="button" data-action="edit-trip" data-id="${escapeHtml(trip.id)}">Edit</button>
+            <button class="mini-btn delete-btn" type="button" data-action="delete-trip" data-id="${escapeHtml(trip.id)}">Delete</button>
+          </div>
+        </td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+async function onManageTripsAction(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+
+  const action = button.dataset.action;
+  const tripId = String(button.dataset.id || "").trim();
+  const trip = state.trips.find((item) => item.id === tripId);
+  if (!trip) {
+    return;
+  }
+
+  if (action === "edit-trip") {
+    const rawName = await requestPrompt({
+      title: "Edit Trip",
+      message: "Update Trip Name:",
+      confirmText: "Save",
+      cancelText: "Cancel",
+      initialValue: trip.name
+    });
+
+    const nextName = String(rawName || "").trim();
+    if (!nextName || nextName === trip.name) {
+      return;
+    }
+
+    try {
+      const response = await apiFetch(`/api/trips/${tripId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nextName })
+      });
+
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response, "Trip Update Failed"));
+      }
+
+      const updated = await response.json();
+      state.trips = state.trips.map((item) => (item.id === updated.id ? updated : item));
+      hydrateTripOptions();
+      renderManageTrips();
+      renderTripSummary();
+      setImportMessage(`Trip Updated: ${updated.name}`, false);
+    } catch (error) {
+      setImportMessage(error.message || "Could Not Update Trip.", true);
+    }
+
+    return;
+  }
+
+  if (action === "delete-trip") {
+    const linkedEntries = state.transactions.filter((tx) => String(tx.tripId || "").trim() === tripId).length;
+    const confirmed = await requestConfirm({
+      title: "Delete Trip",
+      message: linkedEntries > 0
+        ? `Delete ${trip.name}? This Will Remove The Trip Tag From ${linkedEntries} Linked Entr${linkedEntries === 1 ? "y" : "ies"}.`
+        : `Delete ${trip.name}?`,
+      confirmText: "Delete",
+      tone: "danger"
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await apiFetch(`/api/trips/${tripId}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error(await getErrorMessage(response, "Trip Delete Failed"));
+      }
+
+      state.trips = state.trips.filter((item) => item.id !== tripId);
+      state.transactions = state.transactions.map((tx) => (
+        String(tx.tripId || "").trim() === tripId ? { ...tx, tripId: "" } : tx
+      ));
+
+      hydrateTripOptions();
+      renderManageTrips();
+      renderTripSummary();
+      render();
+      setImportMessage(`Trip Deleted: ${trip.name}`, false);
+    } catch (error) {
+      setImportMessage(error.message || "Could Not Delete Trip.", true);
+    }
+  }
 }
 
 function onTripSummaryFilterChanged() {
