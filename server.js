@@ -582,10 +582,28 @@ function normalizeCategory({ value, parentCategory, type, description }) {
   const normalizedParent = rawParent.toLowerCase() === "personal expenses" ? "Personal" : rawParent;
   const groups = categoryModel[type] || [];
 
+  const pickFallbackSubcategory = (group) => {
+    if (!group || !Array.isArray(group.subcategories) || !group.subcategories.length) {
+      return type === "income" ? "Other Income" : "Other";
+    }
+
+    const explicitOther = group.subcategories.find((subcategory) => /^other\b/i.test(subcategory));
+    return explicitOther || group.subcategories[0];
+  };
+
   if (rawCategory) {
     const alias = legacyAliases[rawCategory.toUpperCase()];
     if (alias) {
       return alias;
+    }
+
+    // Some imports place the parent category value in the category column.
+    const categoryAsParent = groups.find((group) => group.name.toLowerCase() === rawCategory.toLowerCase());
+    if (categoryAsParent) {
+      return {
+        parentCategory: categoryAsParent.name,
+        category: pickFallbackSubcategory(categoryAsParent)
+      };
     }
 
     for (const group of groups) {
@@ -602,6 +620,17 @@ function normalizeCategory({ value, parentCategory, type, description }) {
       if (sub) {
         return { parentCategory: parentMatch.name, category: sub };
       }
+    }
+  }
+
+  // If parent category is provided but subcategory is blank/unknown, keep the parent.
+  if (!rawCategory && normalizedParent) {
+    const parentMatch = groups.find((group) => group.name.toLowerCase() === normalizedParent.toLowerCase());
+    if (parentMatch) {
+      return {
+        parentCategory: parentMatch.name,
+        category: pickFallbackSubcategory(parentMatch)
+      };
     }
   }
 
