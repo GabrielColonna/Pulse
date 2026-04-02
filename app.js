@@ -2831,17 +2831,19 @@ function renderManageTrips() {
   }
 
   if (!state.trips.length) {
-    els.manageTripsBody.innerHTML = '<tr><td colspan="3" class="empty-state">No Trips Found.</td></tr>';
+    els.manageTripsBody.innerHTML = '<tr><td colspan="4" class="empty-state">No Trips Found.</td></tr>';
     return;
   }
 
   const tripUsage = new Map();
+  const tripTotals = new Map();
   for (const tx of state.transactions) {
     const tripId = String(tx.tripId || "").trim();
     if (!tripId) {
       continue;
     }
     tripUsage.set(tripId, (tripUsage.get(tripId) || 0) + 1);
+    tripTotals.set(tripId, (tripTotals.get(tripId) || 0) + Number(tx.amount || 0));
   }
 
   els.manageTripsBody.innerHTML = state.trips
@@ -2849,9 +2851,11 @@ function renderManageTrips() {
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
     .map((trip) => {
       const usageCount = tripUsage.get(trip.id) || 0;
+      const tripTotal = tripTotals.get(trip.id) || 0;
       return `
       <tr>
         <td>${escapeHtml(trip.name)}</td>
+        <td>${formatMoney(tripTotal)}</td>
         <td>${usageCount}</td>
         <td>
           <div class="item-actions">
