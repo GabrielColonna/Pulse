@@ -4,11 +4,11 @@ const path = require("path");
 
 const express = require("express");
 const multer = require("multer");
-const sqlite3 = require("sqlite3").verbose();
+const { Client, Pool } = require("pg");
 const xlsx = require("xlsx");
 
 const PORT = Number(process.env.PORT) || 4100;
-const DB_PATH = path.join(__dirname, "budget.db");
+const DATABASE_URL = process.env.DATABASE_URL;
 const CLIENT_ORIGINS = String(process.env.CLIENT_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -19,6 +19,11 @@ const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
 const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 const importPreviewCache = new Map();
+
+// PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: DATABASE_URL || "postgresql://localhost/pulse"
+});
 
 app.use(express.json());
 app.use((req, res, next) => {
@@ -46,7 +51,97 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname));
 
-const db = new sqlite3.Database(DB_PATH);
+// Initialize database schema on startup
+async function initializeDatabase() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Create trips table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS trips (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        start_date TEXT,
+        end_date TEXT,
+        created_at BIGINT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    // Create transactions table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        description TEXT NOT NULL,
+        parent_category TEXT,
+        trip_id TEXT,
+        category TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
+        amount NUMERIC NOT NULL,
+        created_at BIGINT NOT NULL
+      )
+    `);
+
+    // Handle migrations (ALTER TABLE are idempotent with IF NOT EXISTS approaches)
+    await client.query(`
+      ALTER TABLE transactions 
+      ADD COLUMN IF NOT EXISTS parent_category TEXT
+    `);
+    await client.query(`
+      ALTER TABLE transactions 
+      ADD COLUMN IF NOT EXISTS trip_id TEXT
+    `);
+
+    // Keep historical data consistent with current category naming
+    await client.query(
+      "UPDATE transactions SET category = $1 WHERE category = $2",
+      ["Salary", "Paycheck/Salary"]
+    );
+    await client.query(
+      "UPDATE transactions SET parent_category = $1 WHERE parent_category = $2",
+      ["Personal", "Personal Expenses"]
+    );
+    await client.query(
+      "UPDATE transactions SET category = $1 WHERE parent_category = $2 AND category = $3",
+      ["Other Car", "Car", "Other"]
+    );
+    await client.query(
+      "UPDATE transactions SET category = $1 WHERE parent_category = $2 AND category = $3",
+      ["Transportation", "Travel", "Rental"]
+    );
+
+    // Fix incorrectly stored Necessities transactions
+    const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
+    const healthPattern = new RegExp(healthKeywords.join("|"), "i");
+
+    const rows = await client.query(
+      "SELECT id, description FROM transactions WHERE parent_category = $1 AND category = $2 AND type = $3",
+      ["Personal", "Other", "expense"]
+    );
+
+    for (const row of rows.rows) {
+      if (healthPattern.test(row.description)) {
+        await client.query(
+          "UPDATE transactions SET parent_category = $1, category = $2 WHERE id = $3",
+          ["Expenses", "Necessities", row.id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    console.log("Database initialized successfully");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Database initialization error:", error);
+  } finally {
+    client.release();
+  }
+}
+
+// Initialize database on app start
+initializeDatabase().catch(console.error);
 
 const categoryModel = {
   income: [
@@ -283,94 +378,38 @@ const legacyAliases = {
   "OTHER EXPENSE": { parentCategory: "Expenses", category: "Losses" }
 };
 
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS trips (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      start_date TEXT,
-      end_date TEXT,
-      created_at INTEGER NOT NULL,
-      archived INTEGER NOT NULL DEFAULT 0
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS transactions (
-      id TEXT PRIMARY KEY,
-      date TEXT NOT NULL,
-      description TEXT NOT NULL,
-      parent_category TEXT,
-      trip_id TEXT,
-      category TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
-      amount REAL NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `);
-
-  db.run("ALTER TABLE transactions ADD COLUMN parent_category TEXT", () => {});
-  db.run("ALTER TABLE transactions ADD COLUMN trip_id TEXT", () => {});
-
-  // Keep historical data consistent with current category naming.
-  db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
-  db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
-  db.run("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
-  db.run("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
-
-  // Fix incorrectly stored Necessities transactions (health-related expenses saved as Personal > Other)
-  const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
-  const healthPattern = new RegExp(healthKeywords.join("|"), "i");
-  
-  db.all(
-    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'",
-    (err, rows) => {
-      if (err || !rows) return;
-      
-      rows.forEach((row) => {
-        if (healthPattern.test(row.description)) {
-          db.run(
-            "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = ?",
-            [row.id]
-          );
-        }
-      });
-    }
-  );
-});
-
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(error) {
+    pool.query(sql, params, function onRun(error, result) {
       if (error) {
         reject(error);
         return;
       }
-      resolve(this);
+      resolve({ changes: result.rowCount });
     });
   });
 }
 
 function dbAll(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (error, rows) => {
+    pool.query(sql, params, (error, result) => {
       if (error) {
         reject(error);
         return;
       }
-      resolve(rows);
+      resolve(result.rows);
     });
   });
 }
 
 function dbGet(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (error, row) => {
+    pool.query(sql, params, (error, result) => {
       if (error) {
         reject(error);
         return;
       }
-      resolve(row);
+      resolve(result.rows[0]);
     });
   });
 }
@@ -381,7 +420,7 @@ async function resolveTripId(rawTripId) {
     return "";
   }
 
-  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND archived = 0", [cleanTripId]);
+  const trip = await dbGet("SELECT id FROM trips WHERE id = $1 AND archived = 0", [cleanTripId]);
   if (!trip) {
     const error = new Error("Trip Not Found");
     error.code = "TRIP_NOT_FOUND";
@@ -397,7 +436,7 @@ async function findOrCreateTripByName(rawName) {
     return "";
   }
 
-  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower($1) AND archived = 0", [cleanName]);
   if (existing?.id) {
     return existing.id;
   }
@@ -405,7 +444,7 @@ async function findOrCreateTripByName(rawName) {
   const id = crypto.randomUUID();
   await dbRun(
     `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
-     VALUES (?, ?, ?, ?, ?, 0)`,
+     VALUES ($1, $2, $3, $4, $5, 0)`,
     [id, cleanName, "", "", Date.now()]
   );
 
@@ -790,7 +829,7 @@ app.post("/api/trips", async (req, res) => {
   }
 
   try {
-    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower($1) AND archived = 0", [cleanName]);
     if (existing) {
       res.json(existing);
       return;
@@ -807,7 +846,7 @@ app.post("/api/trips", async (req, res) => {
 
     await dbRun(
       `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
-       VALUES (?, ?, ?, ?, ?, ?)` ,
+       VALUES ($1, $2, $3, $4, $5, $6)` ,
       [trip.id, trip.name, trip.startDate, trip.endDate, trip.createdAt, trip.archived]
     );
 
@@ -828,7 +867,7 @@ app.put("/api/trips/:id", async (req, res) => {
 
   try {
     const existing = await dbGet(
-      "SELECT id FROM trips WHERE id = ? AND archived = 0",
+      "SELECT id FROM trips WHERE id = $1 AND archived = 0",
       [id]
     );
 
@@ -838,7 +877,7 @@ app.put("/api/trips/:id", async (req, res) => {
     }
 
     const duplicate = await dbGet(
-      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND archived = 0",
+      "SELECT id FROM trips WHERE lower(name) = lower($1) AND id != $2 AND archived = 0",
       [cleanName, id]
     );
 
@@ -847,12 +886,12 @@ app.put("/api/trips/:id", async (req, res) => {
       return;
     }
 
-    await dbRun("UPDATE trips SET name = ? WHERE id = ?", [cleanName, id]);
+    await dbRun("UPDATE trips SET name = $1 WHERE id = $2", [cleanName, id]);
 
     const updated = await dbGet(
       `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
        FROM trips
-       WHERE id = ?`,
+       WHERE id = $1`,
       [id]
     );
 
@@ -873,12 +912,12 @@ app.delete("/api/trips/:id", async (req, res) => {
     await dbRun("BEGIN TRANSACTION");
 
     const detachResult = await dbRun(
-      "UPDATE transactions SET trip_id = '' WHERE trip_id = ?",
+      "UPDATE transactions SET trip_id = '' WHERE trip_id = $1",
       [id]
     );
 
     const deleteResult = await dbRun(
-      "DELETE FROM trips WHERE id = ?",
+      "DELETE FROM trips WHERE id = $1",
       [id]
     );
 
@@ -962,7 +1001,7 @@ app.post("/api/transactions", async (req, res) => {
 
       await dbRun(
         `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, tx.category, tx.type, tx.amount, tx.createdAt]
       );
 
@@ -1008,8 +1047,8 @@ app.put("/api/transactions/:id", async (req, res) => {
 
     const result = await dbRun(
       `UPDATE transactions
-       SET date = ?, description = ?, parent_category = ?, trip_id = ?, category = ?, type = ?, amount = ?
-       WHERE id = ?`,
+       SET date = $1, description = $2, parent_category = $3, trip_id = $4, category = $5, type = $6, amount = $7
+       WHERE id = $8`,
       [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, cleanType, cleanAmount, id]
     );
 
@@ -1021,7 +1060,7 @@ app.put("/api/transactions/:id", async (req, res) => {
     const rows = await dbAll(
       `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
-       WHERE id = ?`,
+       WHERE id = $1`,
       [id]
     );
 
@@ -1037,7 +1076,7 @@ app.put("/api/transactions/:id", async (req, res) => {
 
 app.delete("/api/transactions/:id", async (req, res) => {
   try {
-    const result = await dbRun("DELETE FROM transactions WHERE id = ?", [req.params.id]);
+    const result = await dbRun("DELETE FROM transactions WHERE id = $1", [req.params.id]);
     if (!result.changes) {
       res.status(404).json({ error: "Transaction Not Found" });
       return;
@@ -1104,7 +1143,7 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
 
       await dbRun(
         `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, tx.createdAt]
       );
 
@@ -1231,7 +1270,7 @@ app.post("/api/import-commit", async (req, res) => {
 
       await dbRun(
         `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, createdAt]
       );
 

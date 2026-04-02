@@ -1,8 +1,6 @@
 node_modules/
 uploads/
 *.log
-budget.db
-budget.db-journal
 .env
 .env.local
 .DS_Store

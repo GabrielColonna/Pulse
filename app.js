@@ -73,7 +73,7 @@ const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#0
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
 const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
 const PRIVACY_PIN = "0307";
-const PRIVACY_GATE_ENABLED = false;
+const PRIVACY_GATE_ENABLED = true;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
 
 function normalizeApiBase(rawBase) {
