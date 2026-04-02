@@ -66,11 +66,11 @@ const categoryModel = {
     },
     {
       name: "Car",
-      subcategories: ["Gas", "Oil Changes", "Repairs", "Tolls", "Parking", "Other"]
+      subcategories: ["Gas", "Oil Changes", "Repairs", "Tolls", "Parking", "Other Car"]
     },
     {
       name: "Travel",
-      subcategories: ["Hotel", "Flights", "Rental", "Activities"]
+      subcategories: ["Hotel", "Flights", "Transportation", "Activities"]
     },
     {
       name: "Girlfriend",
@@ -170,7 +170,7 @@ const classifyRules = {
     },
     {
       parentCategory: "Car",
-      category: "Other",
+      category: "Other Car",
       keywords: ["registration", "dmv"]
     },
     {
@@ -185,8 +185,8 @@ const classifyRules = {
     },
     {
       parentCategory: "Travel",
-      category: "Rental",
-      keywords: ["rental", "rent car", "car rental"]
+      category: "Transportation",
+      keywords: ["lyft", "uber"]
     },
     {
       parentCategory: "Travel",
@@ -265,7 +265,7 @@ const legacyAliases = {
   OIL: { parentCategory: "Car", category: "Oil Changes" },
   TOL: { parentCategory: "Car", category: "Tolls" },
   PAR: { parentCategory: "Car", category: "Parking" },
-  OTH2: { parentCategory: "Car", category: "Other" },
+  OTH2: { parentCategory: "Car", category: "Other Car" },
   GIFT: { parentCategory: "Girlfriend", category: "Gifts" },
   DATE: { parentCategory: "Girlfriend", category: "Dates" },
   OTH3: { parentCategory: "Girlfriend", category: "Other" },
@@ -315,6 +315,8 @@ db.serialize(() => {
   // Keep historical data consistent with current category naming.
   db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
   db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
+  db.run("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
+  db.run("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
 
   // Fix incorrectly stored Necessities transactions (health-related expenses saved as Personal > Other)
   const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
@@ -445,6 +447,16 @@ function normalizeDate(value) {
   }
 
   if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    const isUtcMidnight =
+      value.getUTCHours() === 0 &&
+      value.getUTCMinutes() === 0 &&
+      value.getUTCSeconds() === 0 &&
+      value.getUTCMilliseconds() === 0;
+
+    if (isUtcMidnight) {
+      return formatDateParts(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
+    }
+
     return formatDateParts(value.getFullYear(), value.getMonth() + 1, value.getDate());
   }
 
@@ -463,6 +475,11 @@ function normalizeDate(value) {
 
   const candidate = new Date(raw);
   if (!Number.isNaN(candidate.valueOf())) {
+    const hasTimezoneHint = /z$/i.test(raw) || /[+-]\d{2}:?\d{2}$/.test(raw);
+    if (raw.includes("T") || hasTimezoneHint) {
+      return formatDateParts(candidate.getUTCFullYear(), candidate.getUTCMonth() + 1, candidate.getUTCDate());
+    }
+
     return formatDateParts(candidate.getFullYear(), candidate.getMonth() + 1, candidate.getDate());
   }
 
@@ -603,9 +620,19 @@ function getImportRowCell(row, headerName) {
   return row[headerName];
 }
 
-function parseImportRow(row, mapping, rowNumber) {
-  const description = String(getImportRowCell(row, mapping.description) || "").trim();
-  const amountRaw = normalizeAmount(getImportRowCell(row, mapping.amount));
+function parseImportRow(row, mapping, rowNumber, overrides = {}) {
+  const overrideDate = String(overrides.date || "").trim();
+  const overrideDescription = String(overrides.description || "").trim();
+  const overrideParentCategory = String(overrides.parentCategory || "").trim();
+  const overrideCategory = String(overrides.category || "").trim();
+  const overrideTripName = String(overrides.tripName || "").trim();
+  const overrideType = String(overrides.type || "").trim().toLowerCase();
+  const overrideAmount = overrides.amount;
+
+  const description = overrideDescription || String(getImportRowCell(row, mapping.description) || "").trim();
+  const amountRaw = overrideAmount !== undefined && overrideAmount !== null && String(overrideAmount).trim() !== ""
+    ? normalizeAmount(overrideAmount)
+    : normalizeAmount(getImportRowCell(row, mapping.amount));
 
   if (!description) {
     return { ok: false, reason: "Missing Description", rowNumber };
@@ -615,7 +642,7 @@ function parseImportRow(row, mapping, rowNumber) {
     return { ok: false, reason: "Invalid Amount", rowNumber };
   }
 
-  const typeRaw = String(getImportRowCell(row, mapping.type) || "").trim().toLowerCase();
+  const typeRaw = overrideType || String(getImportRowCell(row, mapping.type) || "").trim().toLowerCase();
   const type = typeRaw === "income" || typeRaw === "expense"
     ? typeRaw
     : amountRaw < 0
@@ -623,21 +650,23 @@ function parseImportRow(row, mapping, rowNumber) {
       : "income";
 
   const normalized = normalizeCategory({
-    value: getImportRowCell(row, mapping.category),
-    parentCategory: getImportRowCell(row, mapping.parentCategory),
+    value: overrideCategory || getImportRowCell(row, mapping.category),
+    parentCategory: overrideParentCategory || getImportRowCell(row, mapping.parentCategory),
     type,
     description
   });
+
+  const tripName = overrideTripName || String(getImportRowCell(row, mapping.trip) || "").trim();
 
   return {
     ok: true,
     tx: {
       rowNumber,
-      date: normalizeDate(getImportRowCell(row, mapping.date)),
+      date: normalizeDate(overrideDate || getImportRowCell(row, mapping.date)),
       description,
       parentCategory: normalized.parentCategory,
       category: normalized.category,
-      tripName: String(getImportRowCell(row, mapping.trip) || "").trim(),
+      tripName,
       type,
       amount: Math.abs(amountRaw)
     }
@@ -655,7 +684,7 @@ async function getExistingDuplicateKeys() {
   return new Set(rows.map((row) => buildDuplicateKey(row)));
 }
 
-function buildImportPreview(rows, mapping, existingDuplicateKeys) {
+function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides = {}) {
   const validTransactions = [];
   const previewRows = [];
   const duplicateCounts = {
@@ -666,7 +695,7 @@ function buildImportPreview(rows, mapping, existingDuplicateKeys) {
 
   rows.forEach((row, index) => {
     const rowNumber = index + 2;
-    const parsed = parseImportRow(row, mapping, rowNumber);
+    const parsed = parseImportRow(row, mapping, rowNumber, rowOverrides[String(rowNumber)] || rowOverrides[rowNumber] || {});
 
     if (!parsed.ok) {
       previewRows.push({
@@ -1176,10 +1205,11 @@ app.post("/api/import-commit", async (req, res) => {
   }
 
   const skipDuplicates = req.body?.skipDuplicates !== false;
+  const rowEdits = req.body?.rowEdits && typeof req.body.rowEdits === "object" ? req.body.rowEdits : {};
 
   try {
     const existingDuplicateKeys = skipDuplicates ? await getExistingDuplicateKeys() : new Set();
-    const preview = buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys);
+    const preview = buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys, rowEdits);
     const batchDuplicateKeys = new Set();
 
     let importedCount = 0;

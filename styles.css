@@ -958,7 +958,7 @@ select {
 .import-preview-summary {
   margin-bottom: 10px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(100px, 1fr));
+  grid-template-columns: repeat(6, minmax(100px, 1fr));
   gap: 8px;
 }
 
@@ -991,6 +991,26 @@ select {
 
 .import-preview-actions {
   margin-top: 10px;
+}
+
+.import-preview-inline-select {
+  width: 100%;
+  min-width: 0;
+  background: #120f22;
+  border: 1px solid #43386d;
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: #f4eeff;
+}
+
+.import-preview-fixed-value {
+  display: inline-block;
+  color: #d8c5ff;
+  padding: 6px 0;
+}
+
+.import-preview-row-edited td {
+  background: rgba(53, 255, 134, 0.05);
 }
 
 .app-dialog-card {

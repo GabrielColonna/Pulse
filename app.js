@@ -44,7 +44,7 @@ const DEFAULT_CATEGORY_MODEL = {
         { name: "Repairs", keywords: ["repair", "maintenance", "mechanic", "car tow", "tow", "brake", "registration renewal"] },
         { name: "Tolls", keywords: ["toll", "tolls"] },
         { name: "Parking", keywords: ["parking"] },
-        { name: "Other", keywords: ["registration", "dmv"] }
+        { name: "Other Car", keywords: ["registration", "dmv"] }
       ]
     },
     {
@@ -52,7 +52,7 @@ const DEFAULT_CATEGORY_MODEL = {
       subcategories: [
         { name: "Hotel", keywords: ["hotel", "airbnb", "bnb", "hostel"] },
         { name: "Flights", keywords: ["flight", "airfare", "spirit", "checked bag", "seatbid", "flight to", "san fran flights"] },
-        { name: "Rental", keywords: ["rental", "rent car", "car rental"] },
+        { name: "Transportation", keywords: ["lyft", "uber"] },
         { name: "Activities", keywords: ["activity"] }
       ]
     },
@@ -478,6 +478,9 @@ function wireEvents() {
   els.appDialogCancelButton.addEventListener("click", onAppDialogCancel);
   els.appDialogInput.addEventListener("keydown", onAppDialogInputKeydown);
   els.confirmImportButton.addEventListener("click", commitImportPreview);
+  if (els.importPreviewBody) {
+    els.importPreviewBody.addEventListener("change", onImportPreviewRowFieldChange);
+  }
   els.importMapDate.addEventListener("change", onImportMappingChanged);
   els.importMapDescription.addEventListener("change", onImportMappingChanged);
   els.importMapAmount.addEventListener("change", onImportMappingChanged);
@@ -611,6 +614,35 @@ function normalizeCategoryModelShape(model) {
   };
 }
 
+function migrateCategoryModelLabels(model) {
+  if (!model || typeof model !== "object") {
+    return model;
+  }
+
+  const copy = JSON.parse(JSON.stringify(model));
+  const expenseGroups = Array.isArray(copy.expense) ? copy.expense : [];
+
+  for (const group of expenseGroups) {
+    if (!Array.isArray(group?.subcategories)) {
+      continue;
+    }
+
+    if (group.name === "Car") {
+      group.subcategories = group.subcategories.map((sub) => (
+        sub.name === "Other" ? { ...sub, name: "Other Car" } : sub
+      ));
+    }
+
+    if (group.name === "Travel") {
+      group.subcategories = group.subcategories.map((sub) => (
+        sub.name === "Rental" ? { ...sub, name: "Transportation" } : sub
+      ));
+    }
+  }
+
+  return copy;
+}
+
 function hydrateCategoryModel() {
   try {
     const raw = window.localStorage.getItem(CATEGORY_MODEL_STORAGE_KEY);
@@ -619,7 +651,7 @@ function hydrateCategoryModel() {
       return;
     }
 
-    const parsed = normalizeCategoryModelShape(JSON.parse(raw));
+    const parsed = normalizeCategoryModelShape(migrateCategoryModelLabels(JSON.parse(raw)));
     if (!isValidCategoryModel(parsed)) {
       CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
       return;
@@ -1918,7 +1950,8 @@ async function importFromFile() {
       headers: result.headers || [],
       mapping: result.mapping || {},
       summary: result.summary || {},
-      previewRows: result.previewRows || []
+      previewRows: result.previewRows || [],
+      rowEdits: {}
     };
 
     openImportPreviewModal();
@@ -1952,6 +1985,91 @@ function onImportMappingChanged() {
   }
 
   state.importPreview.mapping = getSelectedImportMapping();
+}
+
+function getImportPreviewRowEdit(rowNumber) {
+  return state.importPreview?.rowEdits?.[String(rowNumber)] || {};
+}
+
+function getImportPreviewRowValue(row, field) {
+  const edits = getImportPreviewRowEdit(row.rowNumber);
+  if (Object.prototype.hasOwnProperty.call(edits, field)) {
+    return edits[field];
+  }
+
+  return row[field];
+}
+
+function getImportPreviewParentOptions(type) {
+  return getGroups(type).map((group) => group.name);
+}
+
+function getImportPreviewSubcategoryOptions(type, parentCategory) {
+  return getSubcategories(type, parentCategory).map((sub) => sub.name);
+}
+
+function setImportPreviewRowField(rowNumber, field, value) {
+  if (!state.importPreview) {
+    return;
+  }
+
+  const rowKey = String(rowNumber);
+  const previewRow = (state.importPreview.previewRows || []).find((row) => String(row.rowNumber) === rowKey);
+  if (!previewRow) {
+    return;
+  }
+
+  const nextEdits = { ...(state.importPreview.rowEdits || {}) };
+  const nextRowEdit = { ...(nextEdits[rowKey] || {}) };
+  const normalizedValue = String(value || "").trim();
+
+  if (!normalizedValue) {
+    delete nextRowEdit[field];
+  } else {
+    nextRowEdit[field] = normalizedValue;
+  }
+
+  if (field === "parentCategory") {
+    const effectiveParent = normalizedValue || String(previewRow.parentCategory || "").trim();
+    const availableSubcategories = getImportPreviewSubcategoryOptions(previewRow.type, effectiveParent);
+    const currentCategory = String(nextRowEdit.category || previewRow.category || "").trim();
+
+    if (!availableSubcategories.includes(currentCategory)) {
+      if (availableSubcategories.length) {
+        nextRowEdit.category = availableSubcategories[0];
+      } else {
+        delete nextRowEdit.category;
+      }
+    }
+  }
+
+  if (field === "category") {
+    nextRowEdit.category = normalizedValue;
+  }
+
+  if (!Object.keys(nextRowEdit).length) {
+    delete nextEdits[rowKey];
+  } else {
+    nextEdits[rowKey] = nextRowEdit;
+  }
+
+  state.importPreview.rowEdits = nextEdits;
+  renderImportPreviewModal();
+}
+
+function onImportPreviewRowFieldChange(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLSelectElement)) {
+    return;
+  }
+
+  const rowNumber = Number(target.dataset.rowNumber || 0);
+  const field = String(target.dataset.field || "").trim();
+  if (!rowNumber || !field) {
+    return;
+  }
+
+  setImportPreviewRowField(rowNumber, field, target.value);
 }
 
 function getSelectedImportMapping() {
@@ -1994,17 +2112,19 @@ function renderImportPreviewModal() {
   hydrateImportMapSelect(els.importMapTrip, headers, mapping.trip || "");
 
   if (els.importPreviewSubtitle) {
-    const fileLabel = preview.fileName ? `File: ${preview.fileName}` : "Review Column Mapping And Rows Before Import";
+    const fileLabel = preview.fileName ? `File: ${preview.fileName}` : "Review Column Mapping And Edit Rows Before Import";
     els.importPreviewSubtitle.textContent = fileLabel;
   }
 
   const summary = preview.summary || {};
+  const editedRowCount = Object.keys(preview.rowEdits || {}).length;
   els.importPreviewSummary.innerHTML = `
     <p>Total Rows: <strong>${Number(summary.totalRows || 0)}</strong></p>
     <p>Ready: <strong>${Number(summary.readyRows || 0)}</strong></p>
     <p>Invalid: <strong>${Number(summary.invalidRows || 0)}</strong></p>
     <p>Dupes (Existing): <strong>${Number(summary.duplicateExistingRows || 0)}</strong></p>
     <p>Dupes (File): <strong>${Number(summary.duplicateFileRows || 0)}</strong></p>
+    <p>Edited Rows: <strong>${editedRowCount}</strong></p>
   `;
 
   const previewRows = preview.previewRows || [];
@@ -2014,6 +2134,12 @@ function renderImportPreviewModal() {
   }
 
   els.importPreviewBody.innerHTML = previewRows.map((row) => {
+    const edited = preview.rowEdits?.[String(row.rowNumber)] || {};
+    const displayParent = String(getImportPreviewRowValue(row, "parentCategory") || "").trim();
+    const displayCategory = String(getImportPreviewRowValue(row, "category") || "").trim();
+    const parentOptions = getImportPreviewParentOptions(row.type);
+    const categoryOptions = getImportPreviewSubcategoryOptions(row.type, displayParent || row.parentCategory || "");
+    const rowEdited = Object.keys(edited).length > 0;
     const statusClass = row.status === "ready"
       ? "preview-status-ready"
       : row.status === "invalid"
@@ -2026,17 +2152,25 @@ function renderImportPreviewModal() {
         ? "Invalid"
         : "Duplicate";
 
+    const parentControl = row.type === "income"
+      ? `<span class="import-preview-fixed-value">${escapeHtml(displayParent || "Income")}</span>`
+      : `<select class="import-preview-inline-select" data-row-number="${escapeHtml(String(row.rowNumber || ""))}" data-field="parentCategory">${parentOptions.map((option) => `<option value="${escapeHtml(option)}"${option === displayParent ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+
+    const categoryControl = categoryOptions.length
+      ? `<select class="import-preview-inline-select" data-row-number="${escapeHtml(String(row.rowNumber || ""))}" data-field="category">${categoryOptions.map((option) => `<option value="${escapeHtml(option)}"${option === displayCategory ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`
+      : `<span class="import-preview-fixed-value">${escapeHtml(displayCategory || "-")}</span>`;
+
     return `
-      <tr>
+      <tr${rowEdited ? ' class="import-preview-row-edited"' : ""}>
         <td>${escapeHtml(String(row.rowNumber || ""))}</td>
         <td>${escapeHtml(row.date || "-")}</td>
         <td>${escapeHtml(row.description || "-")}</td>
         <td>${escapeHtml(row.type ? toTitleCase(row.type) : "-")}</td>
-        <td>${escapeHtml(row.parentCategory || "-")}</td>
-        <td>${escapeHtml(row.category || "-")}</td>
+        <td>${parentControl}</td>
+        <td>${categoryControl}</td>
         <td>${escapeHtml(row.tripName || "-")}</td>
         <td>${typeof row.amount === "number" ? formatMoney(row.amount) : "-"}</td>
-        <td><span class="preview-status ${statusClass}">${escapeHtml(statusText)}${row.reason ? `: ${escapeHtml(row.reason)}` : ""}</span></td>
+        <td><span class="preview-status ${statusClass}">${escapeHtml(statusText)}${row.reason ? `: ${escapeHtml(row.reason)}` : ""}${rowEdited ? " · Edited" : ""}</span></td>
       </tr>
     `;
   }).join("");
@@ -2065,7 +2199,8 @@ async function commitImportPreview() {
       body: JSON.stringify({
         token: state.importPreview.token,
         mapping,
-        skipDuplicates: els.importSkipDuplicates.checked
+          skipDuplicates: els.importSkipDuplicates.checked,
+          rowEdits: state.importPreview.rowEdits || {}
       })
     });
 
@@ -2157,17 +2292,21 @@ function render() {
   renderSavingsInsights();
 }
 
-function getYearToDateTransactions() {
-  const now = new Date();
-  const yearStart = new Date(now.getFullYear(), 0, 1);
+function getYearToDateTransactions(referenceDate) {
+  const reference = referenceDate instanceof Date && !Number.isNaN(referenceDate.valueOf())
+    ? referenceDate
+    : new Date();
+  const yearStart = new Date(reference.getFullYear(), 0, 1);
+  const yearEnd = new Date(reference.getFullYear() + 1, 0, 1);
   return state.transactions.filter((tx) => {
     const txDate = new Date(tx.date + "T00:00:00");
-    return txDate >= yearStart && txDate <= now;
+    return txDate >= yearStart && txDate < yearEnd;
   });
 }
 
 function renderYearMetrics() {
-  const ytdTransactions = getYearToDateTransactions();
+  const { start } = getActiveMonthRange();
+  const ytdTransactions = getYearToDateTransactions(start);
   let ytdIncome = 0;
   let ytdSpending = 0;
   for (const tx of ytdTransactions) {
@@ -2941,6 +3080,7 @@ function onMonthLogFiltersChanged() {
   state.monthLogFilters.type = els.monthLogTypeFilter.value;
   state.monthLogFilters.parent = els.monthLogParentFilter.value;
   state.monthLogFilters.subcategory = els.monthLogSubcategoryFilter.value;
+  state.monthLogSelectedIds.clear();
   render();
 }
 
@@ -2960,8 +3100,16 @@ function resetMonthLogFilters() {
 }
 
 function hydrateMonthLogFilterOptions(monthTransactions) {
-  const uniqueParents = [...new Set(monthTransactions.map((tx) => normalizeLegacyParentCategory(tx.parentCategory)).filter(Boolean))].sort();
-  const uniqueSubcategories = [...new Set(monthTransactions.map((tx) => normalizeLegacyCategoryLabel(tx.category)).filter(Boolean))].sort();
+  const modelParents = (CATEGORY_MODEL.expense || []).map((group) => group.name);
+  const modelSubcategories = (CATEGORY_MODEL.expense || []).flatMap((group) =>
+    (group.subcategories || []).map((sub) => sub.name)
+  );
+
+  const txParents = monthTransactions.map((tx) => normalizeLegacyParentCategory(tx.parentCategory)).filter(Boolean);
+  const txSubcategories = monthTransactions.map((tx) => normalizeLegacyCategoryLabel(tx.category)).filter(Boolean);
+
+  const uniqueParents = [...new Set([...modelParents, ...txParents])].sort();
+  const uniqueSubcategories = [...new Set([...modelSubcategories, ...txSubcategories])].sort();
 
   const previousParent = state.monthLogFilters.parent;
   const previousSubcategory = state.monthLogFilters.subcategory;
