@@ -63,6 +63,22 @@ body {
   gap: 6px;
 }
 
+.privacy-pin-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(44px, 1fr));
+  gap: 8px;
+}
+
+.privacy-pin-digit {
+  width: 100%;
+  min-height: 48px;
+  text-align: center;
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+  border-radius: 12px;
+  padding: 0;
+}
+
 .privacy-field input {
   transition: border-color 600ms ease, box-shadow 600ms ease, background 600ms ease;
 }
@@ -178,6 +194,24 @@ body {
 
 #openSavingsButton {
   box-shadow: inset 1px 0 0 #8a73c9;
+}
+
+#openGlobalSearchButton {
+  min-width: 56px;
+  font-size: 1rem;
+  padding-inline: 10px;
+}
+
+#openGlobalSearchButton .search-nav-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  margin: 0 auto;
+  stroke: #ffffff;
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .topbar-nav > .nav-menu {
@@ -895,6 +929,13 @@ select {
   align-items: end;
 }
 
+.global-search-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .modal-table-wrap {
   border: 1px solid #322955;
   border-radius: 10px;
@@ -1591,6 +1632,10 @@ select:focus {
   }
 
   .log-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .global-search-controls {
     grid-template-columns: 1fr;
   }
 

@@ -113,6 +113,12 @@ const state = {
   tripSummaryFilter: {
     trip: "all"
   },
+  globalSearch: {
+    query: "",
+    results: [],
+    hasSearched: false,
+    isSearching: false
+  },
   importPreview: null,
   monthLogFilters: {
     query: "",
@@ -130,6 +136,7 @@ let importMessageTimeoutId = null;
 let appDialogResolver = null;
 let appDialogMode = "confirm";
 let hasInitializedDashboard = false;
+let isPrivacyUnlocking = false;
 const settingsState = {
   type: "expense",
   parentName: "",
@@ -140,6 +147,7 @@ const settingsState = {
 const els = {
   privacyGate: document.getElementById("privacyGate"),
   privacyPinInput: document.getElementById("privacyPinInput"),
+  privacyPinDigits: Array.from(document.querySelectorAll(".privacy-pin-digit")),
   privacyUnlockButton: document.getElementById("privacyUnlockButton"),
   privacyError: document.getElementById("privacyError"),
   appShell: document.querySelector(".app-shell"),
@@ -176,6 +184,7 @@ const els = {
   recurrenceFrequency: document.getElementById("recurrenceFrequency"),
   recurrenceCount: document.getElementById("recurrenceCount"),
   openSavingsButton: document.getElementById("openSavingsButton"),
+  openGlobalSearchButton: document.getElementById("openGlobalSearchButton"),
   createTripButton: document.getElementById("createTripButton"),
   openTripSummaryButton: document.getElementById("openTripSummaryButton"),
   openManageTripsButton: document.getElementById("openManageTripsButton"),
@@ -221,6 +230,13 @@ const els = {
   tripSummarySubtitle: document.getElementById("tripSummarySubtitle"),
   tripSummaryBody: document.getElementById("tripSummaryBody"),
   tripSummaryTotals: document.getElementById("tripSummaryTotals"),
+  globalSearchModal: document.getElementById("globalSearchModal"),
+  closeGlobalSearchButton: document.getElementById("closeGlobalSearchButton"),
+  globalSearchInput: document.getElementById("globalSearchInput"),
+  runGlobalSearchButton: document.getElementById("runGlobalSearchButton"),
+  globalSearchSubtitle: document.getElementById("globalSearchSubtitle"),
+  globalSearchBody: document.getElementById("globalSearchBody"),
+  globalSearchTotals: document.getElementById("globalSearchTotals"),
   manageTripsModal: document.getElementById("manageTripsModal"),
   closeManageTripsButton: document.getElementById("closeManageTripsButton"),
   manageTripsBody: document.getElementById("manageTripsBody"),
@@ -272,7 +288,8 @@ async function init() {
 }
 
 function initializePrivacyGate() {
-  if (!els.privacyGate || !els.appShell || !els.privacyPinInput || !els.privacyUnlockButton) {
+  const hasPinInput = Boolean(els.privacyPinInput) || getPrivacyPinDigits().length > 0;
+  if (!els.privacyGate || !els.appShell || !hasPinInput || !els.privacyUnlockButton) {
     return true;
   }
 
@@ -284,12 +301,163 @@ function initializePrivacyGate() {
 
   els.privacyGate.hidden = false;
   els.appShell.hidden = true;
-  els.privacyPinInput.value = "";
-  els.privacyPinInput.focus();
+
+  const pinDigits = els.privacyPinDigits || [];
+  if (pinDigits.length) {
+    pinDigits.forEach((digit) => {
+      digit.value = "";
+      digit.disabled = false;
+      digit.addEventListener("input", onPrivacyPinDigitInput);
+      digit.addEventListener("keydown", onPrivacyPinDigitKeydown);
+      digit.addEventListener("paste", onPrivacyPinDigitPaste);
+      digit.addEventListener("focus", onPrivacyPinDigitFocus);
+    });
+    pinDigits[0].focus();
+  } else if (els.privacyPinInput) {
+    els.privacyPinInput.value = "";
+    els.privacyPinInput.focus();
+  }
 
   els.privacyUnlockButton.addEventListener("click", onPrivacyUnlockAttempt);
-  els.privacyPinInput.addEventListener("keydown", onPrivacyPinKeydown);
+  if (els.privacyPinInput) {
+    els.privacyPinInput.addEventListener("keydown", onPrivacyPinKeydown);
+  }
   return false;
+}
+
+function getPrivacyPinDigits() {
+  return els.privacyPinDigits || [];
+}
+
+function setPrivacyPinDigitsFrom(index, rawValue) {
+  const pinDigits = getPrivacyPinDigits();
+  const characters = String(rawValue || "").replace(/\D+/g, "").slice(0, 4);
+  let writeIndex = index;
+
+  for (const character of characters) {
+    if (!pinDigits[writeIndex]) {
+      break;
+    }
+    pinDigits[writeIndex].value = character;
+    writeIndex += 1;
+  }
+
+  const nextField = pinDigits[Math.min(writeIndex, pinDigits.length - 1)] || pinDigits[pinDigits.length - 1];
+  if (nextField) {
+    nextField.focus();
+    nextField.select();
+  }
+}
+
+function getEnteredPrivacyPin() {
+  const pinDigits = getPrivacyPinDigits();
+  if (pinDigits.length) {
+    return pinDigits.map((digit) => String(digit.value || "").replace(/\D+/g, "").slice(0, 1)).join("");
+  }
+
+  return String(els.privacyPinInput?.value || "").replace(/\D+/g, "").slice(0, 4);
+}
+
+function clearPrivacyPinEntry() {
+  const pinDigits = getPrivacyPinDigits();
+  if (pinDigits.length) {
+    pinDigits.forEach((digit) => {
+      digit.value = "";
+    });
+    pinDigits[0].focus();
+    return;
+  }
+
+  if (els.privacyPinInput) {
+    els.privacyPinInput.value = "";
+    els.privacyPinInput.focus();
+  }
+}
+
+function onPrivacyPinDigitFocus(event) {
+  event.target.select();
+}
+
+function onPrivacyPinDigitInput(event) {
+  const input = event.target.closest(".privacy-pin-digit");
+  if (!input) {
+    return;
+  }
+
+  const pinDigits = getPrivacyPinDigits();
+  const index = Number(input.dataset.pinIndex || 0);
+  const digitsOnly = String(input.value || "").replace(/\D+/g, "");
+
+  if (digitsOnly.length > 1) {
+    input.value = "";
+    setPrivacyPinDigitsFrom(index, digitsOnly);
+  } else {
+    input.value = digitsOnly.slice(0, 1);
+    if (input.value && index < pinDigits.length - 1) {
+      pinDigits[index + 1].focus();
+      pinDigits[index + 1].select();
+    }
+  }
+
+  const enteredPin = getEnteredPrivacyPin();
+  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+    onPrivacyUnlockAttempt();
+  }
+}
+
+function onPrivacyPinDigitPaste(event) {
+  event.preventDefault();
+  const input = event.target.closest(".privacy-pin-digit");
+  if (!input) {
+    return;
+  }
+
+  const index = Number(input.dataset.pinIndex || 0);
+  const pastedText = event.clipboardData?.getData("text") || "";
+  setPrivacyPinDigitsFrom(index, pastedText);
+
+  const enteredPin = getEnteredPrivacyPin();
+  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+    onPrivacyUnlockAttempt();
+  }
+}
+
+function onPrivacyPinDigitKeydown(event) {
+  const input = event.target.closest(".privacy-pin-digit");
+  if (!input) {
+    return;
+  }
+
+  const pinDigits = getPrivacyPinDigits();
+  const index = Number(input.dataset.pinIndex || 0);
+  const isDigit = /^[0-9]$/.test(event.key);
+  const allowKeys = ["Tab", "Shift", "Control", "Alt", "Meta", "ArrowLeft", "ArrowRight", "Delete", "Backspace", "Enter"];
+
+  if (event.key === "Enter") {
+    event.preventDefault();
+    onPrivacyUnlockAttempt();
+    return;
+  }
+
+  if (event.key === "Backspace") {
+    if (input.value) {
+      input.value = "";
+      return;
+    }
+
+    if (index > 0) {
+      event.preventDefault();
+      pinDigits[index - 1].focus();
+      pinDigits[index - 1].select();
+    }
+    return;
+  }
+
+  if (allowKeys.includes(event.key) || isDigit) {
+    return;
+  }
+
+  event.preventDefault();
 }
 
 function onPrivacyPinKeydown(event) {
@@ -306,16 +474,21 @@ function waitFor(ms) {
 }
 
 async function onPrivacyUnlockAttempt() {
-  const inputPin = String(els.privacyPinInput.value || "").trim();
+  if (isPrivacyUnlocking) {
+    return;
+  }
+
+  const inputPin = getEnteredPrivacyPin();
   if (inputPin !== PRIVACY_PIN) {
     if (els.privacyError) {
       els.privacyError.textContent = "Incorrect PIN. Try Again.";
       els.privacyError.style.color = "#ff4766";
     }
-    els.privacyPinInput.value = "";
-    els.privacyPinInput.focus();
+    clearPrivacyPinEntry();
     return;
   }
+
+  isPrivacyUnlocking = true;
 
   if (els.privacyError) {
     els.privacyError.textContent = "Access Granted.";
@@ -323,7 +496,12 @@ async function onPrivacyUnlockAttempt() {
   }
 
   els.privacyUnlockButton.disabled = true;
-  els.privacyPinInput.disabled = true;
+  if (els.privacyPinInput) {
+    els.privacyPinInput.disabled = true;
+  }
+  for (const digit of getPrivacyPinDigits()) {
+    digit.disabled = true;
+  }
   els.privacyGate.classList.add("privacy-unlock-success");
 
   await waitFor(1000);
@@ -411,6 +589,9 @@ function wireEvents() {
   if (els.openSavingsButton) {
     els.openSavingsButton.addEventListener("click", openSavingsModal);
   }
+  if (els.openGlobalSearchButton) {
+    els.openGlobalSearchButton.addEventListener("click", openGlobalSearchModal);
+  }
 
   // Setup nav menu toggle functionality
   wireNavMenuToggles();
@@ -450,11 +631,17 @@ function wireEvents() {
   els.monthLogDeselectAllButton.addEventListener("click", deselectAllMonthLogRows);
   els.monthLogDeleteSelectedButton.addEventListener("click", deleteSelectedMonthLogRows);
   els.closeTripSummaryButton.addEventListener("click", closeTripSummaryModal);
+  if (els.closeGlobalSearchButton) {
+    els.closeGlobalSearchButton.addEventListener("click", closeGlobalSearchModal);
+  }
   if (els.closeManageTripsButton) {
     els.closeManageTripsButton.addEventListener("click", closeManageTripsModal);
   }
   els.monthLogModal.addEventListener("click", onModalBackdropClick);
   els.tripSummaryModal.addEventListener("click", onModalBackdropClick);
+  if (els.globalSearchModal) {
+    els.globalSearchModal.addEventListener("click", onModalBackdropClick);
+  }
   if (els.manageTripsModal) {
     els.manageTripsModal.addEventListener("click", onModalBackdropClick);
   }
@@ -493,6 +680,12 @@ function wireEvents() {
   els.monthLogParentFilter.addEventListener("change", onMonthLogFiltersChanged);
   els.monthLogSubcategoryFilter.addEventListener("change", onMonthLogFiltersChanged);
   els.tripSummaryTripFilter.addEventListener("change", onTripSummaryFilterChanged);
+  if (els.globalSearchInput) {
+    els.globalSearchInput.addEventListener("keydown", onGlobalSearchInputKeydown);
+  }
+  if (els.runGlobalSearchButton) {
+    els.runGlobalSearchButton.addEventListener("click", runGlobalSearch);
+  }
   els.resetMonthLogFilters.addEventListener("click", resetMonthLogFilters);
   els.monthLogBody.addEventListener("click", onMonthLogAction);
   els.monthLogBody.addEventListener("change", onMonthLogSelectionChanged);
@@ -1398,6 +1591,11 @@ function onModalBackdropClick(event) {
 
   if (event.target === els.tripSummaryModal) {
     closeTripSummaryModal();
+    return;
+  }
+
+  if (event.target === els.globalSearchModal) {
+    closeGlobalSearchModal();
     return;
   }
 
@@ -2823,6 +3021,140 @@ function closeManageTripsModal() {
 
 function closeTripSummaryModal() {
   els.tripSummaryModal.hidden = true;
+}
+
+function openGlobalSearchModal() {
+  if (!els.globalSearchModal) {
+    return;
+  }
+
+  els.globalSearchModal.hidden = false;
+
+  if (els.globalSearchInput) {
+    els.globalSearchInput.value = state.globalSearch.query;
+    els.globalSearchInput.focus();
+    els.globalSearchInput.select();
+  }
+
+  renderGlobalSearchResults();
+}
+
+function closeGlobalSearchModal() {
+  if (!els.globalSearchModal) {
+    return;
+  }
+
+  els.globalSearchModal.hidden = true;
+}
+
+function onGlobalSearchInputKeydown(event) {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  runGlobalSearch();
+}
+
+async function runGlobalSearch() {
+  if (!els.globalSearchInput) {
+    return;
+  }
+
+  const query = String(els.globalSearchInput.value || "").trim();
+  state.globalSearch.query = query;
+
+  if (!query) {
+    state.globalSearch.results = [];
+    state.globalSearch.hasSearched = false;
+    state.globalSearch.isSearching = false;
+    renderGlobalSearchResults();
+    return;
+  }
+
+  state.globalSearch.isSearching = true;
+  state.globalSearch.hasSearched = true;
+  renderGlobalSearchResults();
+
+  try {
+    const response = await apiFetch(`/api/transactions/search?q=${encodeURIComponent(query)}`);
+    if (!response.ok) {
+      throw new Error("Search Failed");
+    }
+
+    const rows = await response.json();
+    state.globalSearch.results = Array.isArray(rows) ? rows : [];
+  } catch {
+    state.globalSearch.results = [];
+    setImportMessage("Search Failed. Please Try Again.", true);
+  } finally {
+    state.globalSearch.isSearching = false;
+    renderGlobalSearchResults();
+  }
+}
+
+function renderGlobalSearchResults() {
+  if (!els.globalSearchBody || !els.globalSearchTotals || !els.globalSearchSubtitle) {
+    return;
+  }
+
+  if (!state.globalSearch.hasSearched) {
+    els.globalSearchSubtitle.textContent = "Search Across All Months";
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td></tr>';
+    els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
+    return;
+  }
+
+  if (state.globalSearch.isSearching) {
+    els.globalSearchSubtitle.textContent = `Searching For "${state.globalSearch.query}"...`;
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Searching...</td></tr>';
+    els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
+    return;
+  }
+
+  const ordered = state.globalSearch.results
+    .slice()
+    .sort((a, b) => parseDateOnly(b.date).valueOf() - parseDateOnly(a.date).valueOf());
+
+  if (!ordered.length) {
+    els.globalSearchSubtitle.textContent = `No Results Found For "${state.globalSearch.query}"`;
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">No Matching Transactions Found Across The Database.</td></tr>';
+    els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
+    return;
+  }
+
+  let income = 0;
+  let spending = 0;
+
+  els.globalSearchBody.innerHTML = ordered
+    .map((tx) => {
+      const amount = Number(tx.amount || 0);
+      if (tx.type === "income") {
+        income += amount;
+      } else {
+        spending += amount;
+      }
+
+      return `
+      <tr>
+        <td>${formatDateForDisplay(tx.date)}</td>
+        <td>${escapeHtml(tx.description)}</td>
+        <td>${escapeHtml(toTitleCase(tx.type))}</td>
+        <td>${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
+        <td>${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
+        <td>${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
+        <td>${formatMoney(amount)}</td>
+      </tr>
+    `;
+    })
+    .join("");
+
+  els.globalSearchSubtitle.textContent = `Results For "${state.globalSearch.query}" Across All Months`;
+  els.globalSearchTotals.innerHTML = `
+    <p>Matches: <strong>${ordered.length}</strong></p>
+    <p>Total Income: <strong>${formatMoney(income)}</strong></p>
+    <p>Total Spending: <strong>${formatMoney(spending)}</strong></p>
+  `;
 }
 
 function renderManageTrips() {

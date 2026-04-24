@@ -17,9 +17,14 @@
     <section class="privacy-card" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
       <h1 id="privacyTitle">Pulse</h1>
       <p>Enter PIN To Open Your Dashboard.</p>
-      <label class="privacy-field" for="privacyPinInput">
+      <label class="privacy-field" for="privacyPinDigit1">
         PIN
-        <input id="privacyPinInput" type="password" inputmode="numeric" maxlength="4" autocomplete="off" />
+        <div class="privacy-pin-grid" role="group" aria-label="4 Digit PIN">
+          <input id="privacyPinDigit1" class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="0" />
+          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="1" />
+          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="2" />
+          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="3" />
+        </div>
       </label>
       <button id="privacyUnlockButton" class="primary-btn" type="button">Unlock</button>
       <p id="privacyError" class="form-message" aria-live="polite"></p>
@@ -38,6 +43,13 @@
       </div>
 
       <nav class="topbar-nav" aria-label="Primary actions">
+        <button id="openGlobalSearchButton" class="ghost-btn nav-trigger" type="button" aria-label="Search Transactions" title="Search Transactions">
+          <svg class="search-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="16.65" y1="16.65" x2="21" y2="21"></line>
+          </svg>
+        </button>
+
         <div class="nav-menu">
           <button class="ghost-btn nav-trigger" type="button">User</button>
           <div class="nav-dropdown">
@@ -356,6 +368,48 @@
         </table>
       </div>
       <div id="tripSummaryTotals" class="modal-totals"></div>
+    </section>
+  </div>
+
+  <div id="globalSearchModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="globalSearchTitle">
+      <div class="modal-header">
+        <h3 id="globalSearchTitle">Transaction Search</h3>
+        <button id="closeGlobalSearchButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p id="globalSearchSubtitle" class="modal-subtitle">Search Across All Months</p>
+
+      <div class="global-search-controls" aria-label="Global Transaction Search">
+        <label class="log-filter-field">
+          Keyword
+          <input id="globalSearchInput" type="text" placeholder="ex: flowers" />
+        </label>
+        <div class="log-filter-actions">
+          <button id="runGlobalSearchButton" class="primary-btn" type="button">Search</button>
+        </div>
+      </div>
+
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Type</th>
+              <th>Category</th>
+              <th>Subcategory</th>
+              <th>Trip</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="globalSearchBody">
+            <tr>
+              <td colspan="7" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="globalSearchTotals" class="modal-totals"></div>
     </section>
   </div>
 

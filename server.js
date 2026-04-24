@@ -910,6 +910,35 @@ app.get("/api/transactions", async (req, res) => {
   }
 });
 
+app.get("/api/transactions/search", async (req, res) => {
+  const query = String(req.query.q || "").trim().toLowerCase();
+  if (!query) {
+    res.json([]);
+    return;
+  }
+
+  const likeQuery = `%${query}%`;
+
+  try {
+    const rows = await dbAll(
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+       FROM transactions
+       WHERE lower(description) LIKE ?
+          OR lower(COALESCE(parent_category, '')) LIKE ?
+          OR lower(COALESCE(category, '')) LIKE ?
+          OR lower(type) LIKE ?
+          OR lower(date) LIKE ?
+       ORDER BY date DESC, created_at DESC
+       LIMIT 250`,
+      [likeQuery, likeQuery, likeQuery, likeQuery, likeQuery]
+    );
+
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: "Failed To Search Transactions" });
+  }
+});
+
 app.post("/api/transactions", async (req, res) => {
   const { description, amount, type, date, category, parentCategory, tripId, recurrenceFrequency, recurrenceCount } = req.body || {};
   const cleanDescription = String(description || "").trim();
