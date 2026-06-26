@@ -903,7 +903,7 @@ select {
 
 .log-filters {
   display: grid;
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -931,7 +931,7 @@ select {
 
 .global-search-controls {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(140px, 220px) auto;
   gap: 8px;
   margin-bottom: 10px;
 }

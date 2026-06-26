@@ -117,14 +117,16 @@ const state = {
     query: "",
     results: [],
     hasSearched: false,
-    isSearching: false
+    isSearching: false,
+    sortBy: "date-desc"
   },
   importPreview: null,
   monthLogFilters: {
     query: "",
     type: "all",
     parent: "all",
-    subcategory: "all"
+    subcategory: "all",
+    sortBy: "date-desc"
   },
   charts: {
     expenseCategory: null
@@ -224,6 +226,7 @@ const els = {
   monthLogTypeFilter: document.getElementById("monthLogTypeFilter"),
   monthLogParentFilter: document.getElementById("monthLogParentFilter"),
   monthLogSubcategoryFilter: document.getElementById("monthLogSubcategoryFilter"),
+  monthLogSortFilter: document.getElementById("monthLogSortFilter"),
   tripSummaryModal: document.getElementById("tripSummaryModal"),
   closeTripSummaryButton: document.getElementById("closeTripSummaryButton"),
   tripSummaryTripFilter: document.getElementById("tripSummaryTripFilter"),
@@ -233,6 +236,7 @@ const els = {
   globalSearchModal: document.getElementById("globalSearchModal"),
   closeGlobalSearchButton: document.getElementById("closeGlobalSearchButton"),
   globalSearchInput: document.getElementById("globalSearchInput"),
+  globalSearchSortFilter: document.getElementById("globalSearchSortFilter"),
   runGlobalSearchButton: document.getElementById("runGlobalSearchButton"),
   globalSearchSubtitle: document.getElementById("globalSearchSubtitle"),
   globalSearchBody: document.getElementById("globalSearchBody"),
@@ -679,9 +683,15 @@ function wireEvents() {
   els.monthLogTypeFilter.addEventListener("change", onMonthLogFiltersChanged);
   els.monthLogParentFilter.addEventListener("change", onMonthLogFiltersChanged);
   els.monthLogSubcategoryFilter.addEventListener("change", onMonthLogFiltersChanged);
+  if (els.monthLogSortFilter) {
+    els.monthLogSortFilter.addEventListener("change", onMonthLogFiltersChanged);
+  }
   els.tripSummaryTripFilter.addEventListener("change", onTripSummaryFilterChanged);
   if (els.globalSearchInput) {
     els.globalSearchInput.addEventListener("keydown", onGlobalSearchInputKeydown);
+  }
+  if (els.globalSearchSortFilter) {
+    els.globalSearchSortFilter.addEventListener("change", onGlobalSearchSortChanged);
   }
   if (els.runGlobalSearchButton) {
     els.runGlobalSearchButton.addEventListener("click", runGlobalSearch);
@@ -3050,6 +3060,9 @@ function closeGlobalSearchModal() {
 function onGlobalSearchInputKeydown(event) {
   if (event.key !== "Enter") {
     return;
+  if (els.globalSearchSortFilter) {
+    els.globalSearchSortFilter.value = state.globalSearch.sortBy;
+  }
   }
 
   event.preventDefault();
@@ -3112,9 +3125,7 @@ function renderGlobalSearchResults() {
     return;
   }
 
-  const ordered = state.globalSearch.results
-    .slice()
-    .sort((a, b) => parseDateOnly(b.date).valueOf() - parseDateOnly(a.date).valueOf());
+  const ordered = sortTransactions(state.globalSearch.results, state.globalSearch.sortBy);
 
   if (!ordered.length) {
     els.globalSearchSubtitle.textContent = `No Results Found For "${state.globalSearch.query}"`;
@@ -3361,7 +3372,7 @@ function renderMonthLog(monthTransactions) {
   hydrateMonthLogFilterOptions(monthTransactions);
 
   const filteredMonthTransactions = getFilteredMonthTransactions(monthTransactions);
-  const ordered = getOrderedMonthLogTransactions(filteredMonthTransactions);
+  const ordered = sortTransactions(filteredMonthTransactions, state.monthLogFilters.sortBy);
 
   syncMonthLogSelection(ordered);
   updateMonthLogBulkUi(ordered);
@@ -3416,6 +3427,7 @@ function onMonthLogFiltersChanged() {
   state.monthLogFilters.type = els.monthLogTypeFilter.value;
   state.monthLogFilters.parent = els.monthLogParentFilter.value;
   state.monthLogFilters.subcategory = els.monthLogSubcategoryFilter.value;
+  state.monthLogFilters.sortBy = els.monthLogSortFilter ? els.monthLogSortFilter.value : state.monthLogFilters.sortBy;
   state.monthLogSelectedIds.clear();
   render();
 }
@@ -3425,13 +3437,17 @@ function resetMonthLogFilters() {
     query: "",
     type: "all",
     parent: "all",
-    subcategory: "all"
+    subcategory: "all",
+    sortBy: "date-desc"
   };
 
   els.monthLogSearch.value = "";
   els.monthLogTypeFilter.value = "all";
   els.monthLogParentFilter.value = "all";
   els.monthLogSubcategoryFilter.value = "all";
+  if (els.monthLogSortFilter) {
+    els.monthLogSortFilter.value = "date-desc";
+  }
   render();
 }
 
@@ -3466,6 +3482,72 @@ function hydrateMonthLogFilterOptions(monthTransactions) {
   els.monthLogTypeFilter.value = state.monthLogFilters.type;
   els.monthLogParentFilter.value = state.monthLogFilters.parent;
   els.monthLogSubcategoryFilter.value = state.monthLogFilters.subcategory;
+  if (els.monthLogSortFilter) {
+    els.monthLogSortFilter.value = state.monthLogFilters.sortBy;
+  }
+}
+
+function onGlobalSearchSortChanged() {
+  if (!els.globalSearchSortFilter) {
+    return;
+  }
+
+  state.globalSearch.sortBy = els.globalSearchSortFilter.value;
+  renderGlobalSearchResults();
+}
+
+function sortTransactions(transactions, sortBy) {
+  const comparator = getTransactionSortComparator(sortBy);
+  return transactions.slice().sort(comparator);
+}
+
+function getTransactionSortComparator(sortBy) {
+  switch (sortBy) {
+    case "date-asc":
+      return (a, b) => compareTransactionDate(a, b, 1);
+    case "amount-desc":
+      return (a, b) => compareTransactionAmount(a, b, -1);
+    case "amount-asc":
+      return (a, b) => compareTransactionAmount(a, b, 1);
+    case "description-asc":
+      return (a, b) => compareTransactionText(a, b, 1);
+    case "description-desc":
+      return (a, b) => compareTransactionText(a, b, -1);
+    case "date-desc":
+    default:
+      return (a, b) => compareTransactionDate(a, b, -1);
+  }
+}
+
+function compareTransactionDate(a, b, direction) {
+  const dateDiff = (parseDateOnly(a.date).valueOf() - parseDateOnly(b.date).valueOf()) * direction;
+  if (dateDiff !== 0) {
+    return dateDiff;
+  }
+
+  return compareTransactionIdentity(a, b);
+}
+
+function compareTransactionAmount(a, b, direction) {
+  const amountDiff = (Number(a.amount || 0) - Number(b.amount || 0)) * direction;
+  if (amountDiff !== 0) {
+    return amountDiff;
+  }
+
+  return compareTransactionIdentity(a, b);
+}
+
+function compareTransactionText(a, b, direction) {
+  const descriptionDiff = String(a.description || "").localeCompare(String(b.description || "")) * direction;
+  if (descriptionDiff !== 0) {
+    return descriptionDiff;
+  }
+
+  return compareTransactionIdentity(a, b);
+}
+
+function compareTransactionIdentity(a, b) {
+  return String(a.id || "").localeCompare(String(b.id || ""));
 }
 
 function normalizeLegacyCategoryLabel(category) {

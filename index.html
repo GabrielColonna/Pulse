@@ -312,6 +312,17 @@
             <option value="all">All</option>
           </select>
         </label>
+        <label class="log-filter-field">
+          Sort
+          <select id="monthLogSortFilter">
+            <option value="date-desc">Date: Newest First</option>
+            <option value="date-asc">Date: Oldest First</option>
+            <option value="amount-desc">Amount: High To Low</option>
+            <option value="amount-asc">Amount: Low To High</option>
+            <option value="description-asc">Description: A To Z</option>
+            <option value="description-desc">Description: Z To A</option>
+          </select>
+        </label>
         <div class="log-filter-actions">
           <button id="resetMonthLogFilters" class="ghost-btn" type="button">Reset Filters</button>
         </div>
@@ -383,6 +394,17 @@
         <label class="log-filter-field">
           Keyword
           <input id="globalSearchInput" type="text" placeholder="ex: flowers" />
+        </label>
+        <label class="log-filter-field">
+          Sort
+          <select id="globalSearchSortFilter">
+            <option value="date-desc">Date: Newest First</option>
+            <option value="date-asc">Date: Oldest First</option>
+            <option value="amount-desc">Amount: High To Low</option>
+            <option value="amount-asc">Amount: Low To High</option>
+            <option value="description-asc">Description: A To Z</option>
+            <option value="description-desc">Description: Z To A</option>
+          </select>
         </label>
         <div class="log-filter-actions">
           <button id="runGlobalSearchButton" class="primary-btn" type="button">Search</button>
