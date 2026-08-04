@@ -21,6 +21,7 @@ const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 const importPreviewCache = new Map();
 const pool = new Pool({
   connectionString: DATABASE_URL,
+  family: 4,
   ssl: DATABASE_URL && !DATABASE_URL.includes("localhost") && !DATABASE_URL.includes("127.0.0.1")
     ? { rejectUnauthorized: false }
     : false
