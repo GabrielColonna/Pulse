@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const dns = require("dns");
 const fs = require("fs");
 const path = require("path");
 
@@ -22,6 +23,7 @@ const importPreviewCache = new Map();
 const pool = new Pool({
   connectionString: DATABASE_URL,
   family: 4,
+  lookup: (hostname, options, callback) => dns.lookup(hostname, { ...options, family: 4 }, callback),
   ssl: DATABASE_URL && !DATABASE_URL.includes("localhost") && !DATABASE_URL.includes("127.0.0.1")
     ? { rejectUnauthorized: false }
     : false
