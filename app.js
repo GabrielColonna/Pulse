@@ -146,6 +146,8 @@ const settingsState = {
   draftModel: null
 };
 
+const mobileNavMediaQuery = window.matchMedia("(max-width: 640px)");
+
 const els = {
   privacyGate: document.getElementById("privacyGate"),
   privacyPinInput: document.getElementById("privacyPinInput"),
@@ -154,6 +156,10 @@ const els = {
   privacyError: document.getElementById("privacyError"),
   appShell: document.querySelector(".app-shell"),
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
+  mobileNavToggleButton: document.getElementById("mobileNavToggleButton"),
+  openQuickAddButton: document.getElementById("openQuickAddButton"),
+  closeQuickAddButton: document.getElementById("closeQuickAddButton"),
+  workspaceTools: document.querySelector(".workspace-tools"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   settingsModal: document.getElementById("settingsModal"),
@@ -542,6 +548,18 @@ function wireEvents() {
   if (els.sidebarToggleButton) {
     els.sidebarToggleButton.addEventListener("click", toggleSidebarCollapsed);
   }
+  if (els.mobileNavToggleButton) {
+    els.mobileNavToggleButton.addEventListener("click", toggleMobileNav);
+  }
+  if (els.openQuickAddButton) {
+    els.openQuickAddButton.addEventListener("click", openQuickAddModal);
+  }
+  if (els.closeQuickAddButton) {
+    els.closeQuickAddButton.addEventListener("click", closeQuickAddModal);
+  }
+  if (els.workspaceTools) {
+    els.workspaceTools.addEventListener("click", onQuickAddBackdropClick);
+  }
   if (els.openUserProfileButton) {
     els.openUserProfileButton.addEventListener("click", onOpenUserProfile);
   }
@@ -725,6 +743,98 @@ function wireNavMenuToggles() {
       menu.classList.toggle("nav-open");
     });
   });
+}
+
+function isMobileAppView() {
+  return mobileNavMediaQuery.matches;
+}
+
+function setMobileNavOpen(isOpen) {
+  if (!els.appShell || !els.mobileNavToggleButton) {
+    return;
+  }
+
+  if (!isOpen) {
+    document.querySelectorAll(".nav-menu.nav-open").forEach((menu) => {
+      menu.classList.remove("nav-open");
+    });
+  }
+
+  els.appShell.classList.toggle("mobile-nav-open", isOpen);
+  els.mobileNavToggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  els.mobileNavToggleButton.textContent = isOpen ? "Close" : "Menu";
+}
+
+function toggleMobileNav() {
+  if (!isMobileAppView() || !els.appShell) {
+    return;
+  }
+
+  setMobileNavOpen(!els.appShell.classList.contains("mobile-nav-open"));
+}
+
+function closeMobileNav() {
+  if (!els.appShell) {
+    return;
+  }
+
+  setMobileNavOpen(false);
+}
+
+function setQuickAddOpen(isOpen) {
+  if (!els.appShell || !els.workspaceTools) {
+    return;
+  }
+
+  els.appShell.classList.toggle("quick-add-open", isOpen);
+}
+
+function openQuickAddModal() {
+  if (!els.appShell || !els.workspaceTools) {
+    return;
+  }
+
+  setQuickAddOpen(true);
+  closeMobileNav();
+  requestAnimationFrame(() => {
+    els.description?.focus();
+  });
+}
+
+function closeQuickAddModal() {
+  if (!els.appShell || !els.workspaceTools) {
+    return;
+  }
+
+  setQuickAddOpen(false);
+}
+
+function resetMobileDashboardView() {
+  if (!isMobileAppView()) {
+    return;
+  }
+
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    });
+  });
+}
+
+function onQuickAddBackdropClick(event) {
+  if (!isMobileAppView() || !els.appShell?.classList.contains("quick-add-open")) {
+    return;
+  }
+
+  if (event.target !== els.workspaceTools) {
+    return;
+  }
+
+  closeQuickAddModal();
 }
 
 function hydrateSidebarState() {
@@ -1935,6 +2045,10 @@ async function onSubmitEntry(event) {
       }
 
       resetForm();
+      if (isMobileAppView()) {
+        closeQuickAddModal();
+        resetMobileDashboardView();
+      }
     }
 
     if (els.tripAccordion) {
@@ -1974,6 +2088,9 @@ function exitEditMode(options = {}) {
   resetForm();
   if (!options.keepMessage) {
     setMessage("Edit Canceled.", false);
+  }
+  if (isMobileAppView()) {
+    closeQuickAddModal();
   }
 }
 
@@ -2092,6 +2209,11 @@ async function onMonthLogAction(event) {
 }
 
 function focusQuickAddWidget() {
+  if (isMobileAppView()) {
+    openQuickAddModal();
+    return;
+  }
+
   const widgetCard = document.querySelector(".widget-card");
   if (widgetCard) {
     widgetCard.scrollIntoView({ behavior: "smooth", block: "start" });

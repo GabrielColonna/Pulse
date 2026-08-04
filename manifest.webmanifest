@@ -1,0 +1,17 @@
+{
+  "name": "Pulse",
+  "short_name": "Pulse",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#07070f",
+  "theme_color": "#120a28",
+  "description": "Pulse budget dashboard",
+  "icons": [
+    {
+      "src": "assets/pulse-logo-2.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
