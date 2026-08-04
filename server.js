@@ -4,11 +4,11 @@ const path = require("path");
 
 const express = require("express");
 const multer = require("multer");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
 const xlsx = require("xlsx");
 
 const PORT = Number(process.env.PORT) || 4100;
-const DB_PATH = path.join(__dirname, "budget.db");
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 const CLIENT_ORIGINS = String(process.env.CLIENT_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -19,6 +19,12 @@ const app = express();
 const upload = multer({ dest: path.join(__dirname, "uploads") });
 const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 const importPreviewCache = new Map();
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: DATABASE_URL && !DATABASE_URL.includes("localhost") && !DATABASE_URL.includes("127.0.0.1")
+    ? { rejectUnauthorized: false }
+    : false
+});
 
 app.use(express.json());
 app.use((req, res, next) => {
@@ -45,8 +51,6 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(__dirname));
-
-const db = new sqlite3.Database(DB_PATH);
 
 const categoryModel = {
   income: [
@@ -283,105 +287,104 @@ const legacyAliases = {
   "OTHER EXPENSE": { parentCategory: "Expenses", category: "Losses" }
 };
 
-db.serialize(() => {
-  db.run(`
+function toPgSql(sql) {
+  let index = 0;
+  return String(sql).replace(/\?/g, () => `$${++index}`);
+}
+
+async function dbQuery(sql, params = []) {
+  return pool.query(toPgSql(sql), params);
+}
+
+function dbRun(sql, params = []) {
+  return dbQuery(sql, params).then((result) => ({
+    changes: result.rowCount,
+    rows: result.rows
+  }));
+}
+
+function dbAll(sql, params = []) {
+  return dbQuery(sql, params).then((result) => result.rows);
+}
+
+function dbGet(sql, params = []) {
+  return dbQuery(sql, params).then((result) => result.rows[0]);
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function ensureDatabase() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS trips (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
       start_date TEXT,
       end_date TEXT,
-      created_at INTEGER NOT NULL,
-      archived INTEGER NOT NULL DEFAULT 0
+      created_at BIGINT NOT NULL,
+      archived BOOLEAN NOT NULL DEFAULT FALSE
     )
   `);
 
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY,
       date TEXT NOT NULL,
       description TEXT NOT NULL,
       parent_category TEXT,
-      trip_id TEXT,
+      trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
       category TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
       amount REAL NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at BIGINT NOT NULL
     )
   `);
 
-  db.run("ALTER TABLE transactions ADD COLUMN parent_category TEXT", () => {});
-  db.run("ALTER TABLE transactions ADD COLUMN trip_id TEXT", () => {});
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS parent_category TEXT");
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS trip_id UUID");
+  await pool.query("ALTER TABLE trips ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE");
 
-  // Keep historical data consistent with current category naming.
-  db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
-  db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
-  db.run("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
-  db.run("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
+  await pool.query("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
+  await pool.query("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
+  await pool.query("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
+  await pool.query("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
 
-  // Fix incorrectly stored Necessities transactions (health-related expenses saved as Personal > Other)
   const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
   const healthPattern = new RegExp(healthKeywords.join("|"), "i");
-  
-  db.all(
-    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'",
-    (err, rows) => {
-      if (err || !rows) return;
-      
-      rows.forEach((row) => {
-        if (healthPattern.test(row.description)) {
-          db.run(
-            "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = ?",
-            [row.id]
-          );
-        }
-      });
-    }
+
+  const result = await pool.query(
+    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'"
   );
-});
 
-function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(error) {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(this);
-    });
-  });
-}
-
-function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (error, rows) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(rows);
-    });
-  });
-}
-
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (error, row) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(row);
-    });
-  });
+  for (const row of result.rows) {
+    if (healthPattern.test(row.description)) {
+      await pool.query(
+        "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = $1",
+        [row.id]
+      );
+    }
+  }
 }
 
 async function resolveTripId(rawTripId) {
   const cleanTripId = String(rawTripId || "").trim();
   if (!cleanTripId) {
-    return "";
+    return null;
   }
 
-  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND archived = 0", [cleanTripId]);
+  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND archived = FALSE", [cleanTripId]);
   if (!trip) {
     const error = new Error("Trip Not Found");
     error.code = "TRIP_NOT_FOUND";
@@ -394,10 +397,10 @@ async function resolveTripId(rawTripId) {
 async function findOrCreateTripByName(rawName) {
   const cleanName = String(rawName || "").trim();
   if (!cleanName) {
-    return "";
+    return null;
   }
 
-  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND archived = FALSE", [cleanName]);
   if (existing?.id) {
     return existing.id;
   }
@@ -405,7 +408,7 @@ async function findOrCreateTripByName(rawName) {
   const id = crypto.randomUUID();
   await dbRun(
     `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
-     VALUES (?, ?, ?, ?, ?, 0)`,
+     VALUES (?, ?, ?, ?, ?, FALSE)`,
     [id, cleanName, "", "", Date.now()]
   );
 
@@ -772,7 +775,7 @@ app.get("/api/trips", async (req, res) => {
     const rows = await dbAll(
       `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
        FROM trips
-       WHERE archived = 0
+      WHERE archived = FALSE
        ORDER BY name COLLATE NOCASE ASC`
     );
 
@@ -790,7 +793,7 @@ app.post("/api/trips", async (req, res) => {
   }
 
   try {
-    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = FALSE", [cleanName]);
     if (existing) {
       res.json(existing);
       return;
@@ -801,7 +804,7 @@ app.post("/api/trips", async (req, res) => {
       name: cleanName,
       startDate: "",
       endDate: "",
-      archived: 0,
+      archived: false,
       createdAt: Date.now()
     };
 
@@ -828,7 +831,7 @@ app.put("/api/trips/:id", async (req, res) => {
 
   try {
     const existing = await dbGet(
-      "SELECT id FROM trips WHERE id = ? AND archived = 0",
+      "SELECT id FROM trips WHERE id = ? AND archived = FALSE",
       [id]
     );
 
@@ -838,7 +841,7 @@ app.put("/api/trips/:id", async (req, res) => {
     }
 
     const duplicate = await dbGet(
-      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND archived = 0",
+      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND archived = FALSE",
       [cleanName, id]
     );
 
@@ -870,28 +873,27 @@ app.delete("/api/trips/:id", async (req, res) => {
   }
 
   try {
-    await dbRun("BEGIN TRANSACTION");
+    const deleteResult = await withTransaction(async (client) => {
+      const detachResult = await client.query(
+        toPgSql("UPDATE transactions SET trip_id = NULL WHERE trip_id = ?"),
+        [id]
+      );
 
-    const detachResult = await dbRun(
-      "UPDATE transactions SET trip_id = '' WHERE trip_id = ?",
-      [id]
-    );
+      const deleted = await client.query(toPgSql("DELETE FROM trips WHERE id = ?"), [id]);
 
-    const deleteResult = await dbRun(
-      "DELETE FROM trips WHERE id = ?",
-      [id]
-    );
+      return {
+        detachedTransactions: detachResult.rowCount,
+        deleted: deleted.rowCount
+      };
+    });
 
-    if (!deleteResult.changes) {
-      await dbRun("ROLLBACK");
+    if (!deleteResult.deleted) {
       res.status(404).json({ error: "Trip Not Found" });
       return;
     }
 
-    await dbRun("COMMIT");
-    res.json({ ok: true, detachedTransactions: detachResult.changes || 0 });
+    res.json({ ok: true, detachedTransactions: deleteResult.detachedTransactions || 0 });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Delete Trip" });
   }
 });
@@ -899,7 +901,7 @@ app.delete("/api/trips/:id", async (req, res) => {
 app.get("/api/transactions", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
        ORDER BY created_at DESC`
     );
@@ -921,7 +923,7 @@ app.get("/api/transactions/search", async (req, res) => {
 
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
        WHERE lower(description) LIKE ?
           OR lower(COALESCE(parent_category, '')) LIKE ?
@@ -974,31 +976,31 @@ app.post("/api/transactions", async (req, res) => {
     const entriesToCreate = cleanFrequency === "none" ? 1 : cleanRecurrenceCount;
     const created = [];
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (let i = 0; i < entriesToCreate; i += 1) {
+        const tx = {
+          id: crypto.randomUUID(),
+          date: shiftDateByFrequency(cleanDate, cleanFrequency, i),
+          description: cleanDescription,
+          parentCategory: normalized.parentCategory,
+          tripId: cleanTripId,
+          category: normalized.category,
+          type: cleanType,
+          amount: cleanAmount,
+          createdAt: Date.now() + i
+        };
 
-    for (let i = 0; i < entriesToCreate; i += 1) {
-      const tx = {
-        id: crypto.randomUUID(),
-        date: shiftDateByFrequency(cleanDate, cleanFrequency, i),
-        description: cleanDescription,
-        parentCategory: normalized.parentCategory,
-        tripId: cleanTripId,
-        category: normalized.category,
-        type: cleanType,
-        amount: cleanAmount,
-        createdAt: Date.now() + i
-      };
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, tx.category, tx.type, tx.amount, tx.createdAt]
+        );
 
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, tx.category, tx.type, tx.amount, tx.createdAt]
-      );
-
-      created.push(tx);
-    }
-
-    await dbRun("COMMIT");
+        created.push(tx);
+      }
+    });
 
     if (created.length === 1) {
       res.status(201).json(created[0]);
@@ -1007,7 +1009,6 @@ app.post("/api/transactions", async (req, res) => {
 
     res.status(201).json({ created });
   } catch (error) {
-    await dbRun("ROLLBACK").catch(() => {});
     if (error?.code === "TRIP_NOT_FOUND") {
       res.status(400).json({ error: "Selected Trip Does Not Exist" });
       return;
@@ -1048,7 +1049,7 @@ app.put("/api/transactions/:id", async (req, res) => {
     }
 
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
        FROM transactions
        WHERE id = ?`,
       [id]
@@ -1120,30 +1121,29 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
       return;
     }
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (const row of rows) {
+        const tx = toTransaction(row, mapping);
+        if (!tx) {
+          skippedCount += 1;
+          continue;
+        }
 
-    for (const row of rows) {
-      const tx = toTransaction(row, mapping);
-      if (!tx) {
-        skippedCount += 1;
-        continue;
+        const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : null;
+
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, tx.createdAt]
+        );
+
+        importedCount += 1;
       }
-
-      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
-
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, tx.createdAt]
-      );
-
-      importedCount += 1;
-    }
-
-    await dbRun("COMMIT");
+    });
     res.json({ importedCount, skippedCount });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Import Excel File" });
   } finally {
     fs.unlink(req.file.path, () => {});
@@ -1245,31 +1245,31 @@ app.post("/api/import-commit", async (req, res) => {
     let skippedCount = preview.invalidCount;
     let skippedDuplicateCount = 0;
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (const tx of preview.validTransactions) {
+        const duplicateKey = buildDuplicateKey(tx);
+        if (skipDuplicates && (existingDuplicateKeys.has(duplicateKey) || batchDuplicateKeys.has(duplicateKey))) {
+          skippedCount += 1;
+          skippedDuplicateCount += 1;
+          continue;
+        }
 
-    for (const tx of preview.validTransactions) {
-      const duplicateKey = buildDuplicateKey(tx);
-      if (skipDuplicates && (existingDuplicateKeys.has(duplicateKey) || batchDuplicateKeys.has(duplicateKey))) {
-        skippedCount += 1;
-        skippedDuplicateCount += 1;
-        continue;
+        const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : null;
+        const createdAt = Date.now() + importedCount;
+
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, createdAt]
+        );
+
+        importedCount += 1;
+        batchDuplicateKeys.add(duplicateKey);
+        existingDuplicateKeys.add(duplicateKey);
       }
-
-      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
-      const createdAt = Date.now() + importedCount;
-
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, createdAt]
-      );
-
-      importedCount += 1;
-      batchDuplicateKeys.add(duplicateKey);
-      existingDuplicateKeys.add(duplicateKey);
-    }
-
-    await dbRun("COMMIT");
+    });
     importPreviewCache.delete(token);
 
     res.json({
@@ -1279,7 +1279,6 @@ app.post("/api/import-commit", async (req, res) => {
       invalidCount: preview.invalidCount
     });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Commit Import" });
   }
 });
@@ -1493,7 +1492,7 @@ app.get("/api/export-excel", async (req, res) => {
 app.get("/api/export-backup-csv", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS parentCategory, COALESCE(t.trip_id, '') AS tripId,
+      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS parentCategory, COALESCE(t.trip_id::text, '') AS tripId,
               t.category, t.type, t.amount, COALESCE(tr.name, '') AS tripName
        FROM transactions t
        LEFT JOIN trips tr ON tr.id = t.trip_id
@@ -1548,6 +1547,13 @@ app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Budget Dashboard Running On http://localhost:${PORT}`);
-});
+ensureDatabase()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Budget Dashboard Running On http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Database Initialization Failed", error);
+    process.exit(1);
+  });
