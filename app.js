@@ -164,6 +164,7 @@ const mobileNavMediaQuery = window.matchMedia("(max-width: 640px)");
 
 const els = {
   privacyGate: document.getElementById("privacyGate"),
+  loadingScreen: document.getElementById("loadingScreen"),
   privacyPinInput: document.getElementById("privacyPinInput"),
   privacyPinDigits: Array.from(document.querySelectorAll(".privacy-pin-digit")),
   privacyUnlockButton: document.getElementById("privacyUnlockButton"),
@@ -531,8 +532,17 @@ async function onPrivacyUnlockAttempt() {
   await waitFor(1000);
 
   els.privacyGate.hidden = true;
-  els.appShell.hidden = false;
+  if (els.loadingScreen) {
+    els.loadingScreen.hidden = false;
+  }
   await initializeDashboard();
+
+  if (els.loadingScreen) {
+    els.loadingScreen.classList.add("loading-done");
+    await waitFor(420);
+    els.loadingScreen.hidden = true;
+  }
+  els.appShell.hidden = false;
 }
 
 async function initializeDashboard() {
