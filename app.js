@@ -75,6 +75,20 @@ const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
 const PRIVACY_PIN = "0307";
 const PRIVACY_GATE_ENABLED = true;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
+const DEBUG_TRANSACTION_LOAD = true;
+
+function logTransactionLoad(message, details) {
+  if (!DEBUG_TRANSACTION_LOAD) {
+    return;
+  }
+
+  if (details !== undefined) {
+    console.log(`[Pulse Debug] ${message}`, details);
+    return;
+  }
+
+  console.log(`[Pulse Debug] ${message}`);
+}
 
 function normalizeApiBase(rawBase) {
   const base = String(rawBase || "").trim();
@@ -526,6 +540,8 @@ async function initializeDashboard() {
     return;
   }
 
+  logTransactionLoad("initializeDashboard() start", { apiBase: API_BASE || "same-origin" });
+
   hasInitializedDashboard = true;
   hydrateSidebarState();
   hydrateCategoryModel();
@@ -539,9 +555,15 @@ async function initializeDashboard() {
     els.recurrenceAccordion.open = false;
   }
   await refreshTrips();
+  logTransactionLoad("Trips loaded for dashboard", { trips: state.trips.length });
   wireEvents();
   suggestCategoryFromDescription();
   await refreshTransactions();
+
+  logTransactionLoad("initializeDashboard() complete", {
+    transactionsInState: state.transactions.length,
+    activeMonthTransactions: getTransactionsForActiveMonth().length
+  });
 }
 
 function wireEvents() {
@@ -1943,13 +1965,46 @@ function getTransactionsForActiveMonth() {
 
 async function refreshTransactions() {
   try {
+    logTransactionLoad("Requesting transactions from API", {
+      endpoint: buildApiUrl("/api/transactions")
+    });
+
     const response = await apiFetch("/api/transactions");
     if (!response.ok) {
       throw new Error("Could Not Fetch Transactions");
     }
 
-    state.transactions = await response.json();
+    const transactions = await response.json();
+
+    logTransactionLoad("Transactions response received", {
+      httpStatus: response.status,
+      rowCount: Array.isArray(transactions) ? transactions.length : 0
+    });
+
+    if (Array.isArray(transactions) && transactions.length) {
+      const sampleRows = transactions.slice(0, 5).map((tx) => ({
+        id: tx.id,
+        date: tx.date,
+        description: tx.description,
+        type: tx.type,
+        parentCategory: normalizeLegacyParentCategory(tx.parentCategory),
+        category: normalizeLegacyCategoryLabel(tx.category),
+        amount: Number(tx.amount)
+      }));
+      logTransactionLoad("Sample rows (first 5)", sampleRows);
+    }
+
+    state.transactions = transactions;
+    logTransactionLoad("State assigned from API payload", {
+      transactionsInState: state.transactions.length
+    });
+
     render();
+
+    logTransactionLoad("Render completed after transaction load", {
+      recentEntriesRendered: Math.min(10, state.transactions.length),
+      activeMonthTransactions: getTransactionsForActiveMonth().length
+    });
   } catch {
     setMessage("Unable To Load Dashboard Data From Server.", true);
   }
