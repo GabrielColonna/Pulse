@@ -776,7 +776,7 @@ function toTransaction(row, mapping) {
 app.get("/api/trips", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+      `SELECT id, name, COALESCE(start_date, '') AS "startDate", COALESCE(end_date, '') AS "endDate", archived, created_at AS "createdAt"
        FROM trips
       WHERE archived = FALSE
        ORDER BY name COLLATE NOCASE ASC`
@@ -796,7 +796,7 @@ app.post("/api/trips", async (req, res) => {
   }
 
   try {
-    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = FALSE", [cleanName]);
+    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS \"startDate\", COALESCE(end_date, '') AS \"endDate\", archived, created_at AS \"createdAt\" FROM trips WHERE lower(name) = lower(?) AND archived = FALSE", [cleanName]);
     if (existing) {
       res.json(existing);
       return;
@@ -856,7 +856,7 @@ app.put("/api/trips/:id", async (req, res) => {
     await dbRun("UPDATE trips SET name = ? WHERE id = ?", [cleanName, id]);
 
     const updated = await dbGet(
-      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+      `SELECT id, name, COALESCE(start_date, '') AS "startDate", COALESCE(end_date, '') AS "endDate", archived, created_at AS "createdAt"
        FROM trips
        WHERE id = ?`,
       [id]
@@ -904,7 +904,7 @@ app.delete("/api/trips/:id", async (req, res) => {
 app.get("/api/transactions", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
        ORDER BY created_at DESC`
     );
@@ -926,7 +926,7 @@ app.get("/api/transactions/search", async (req, res) => {
 
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
        WHERE lower(description) LIKE ?
           OR lower(COALESCE(parent_category, '')) LIKE ?
@@ -1052,7 +1052,7 @@ app.put("/api/transactions/:id", async (req, res) => {
     }
 
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id::text, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
        WHERE id = ?`,
       [id]
@@ -1289,7 +1289,7 @@ app.post("/api/import-commit", async (req, res) => {
 app.get("/api/export-excel", async (req, res) => {
   try {
     const transactions = await dbAll(
-      `SELECT date, description, COALESCE(parent_category, '') AS parentCategory, category, type, amount
+      `SELECT date, description, COALESCE(parent_category, '') AS "parentCategory", category, type, amount
        FROM transactions
        ORDER BY date ASC, parent_category ASC, type DESC`
     );
@@ -1495,7 +1495,7 @@ app.get("/api/export-excel", async (req, res) => {
 app.get("/api/export-backup-csv", async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS parentCategory, COALESCE(t.trip_id::text, '') AS tripId,
+      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS "parentCategory", COALESCE(t.trip_id::text, '') AS "tripId",
               t.category, t.type, t.amount, COALESCE(tr.name, '') AS tripName
        FROM transactions t
        LEFT JOIN trips tr ON tr.id = t.trip_id
