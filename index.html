@@ -37,6 +37,11 @@
     </section>
   </div>
 
+  <div id="loadingScreen" class="loading-screen" hidden aria-live="polite" aria-label="Loading dashboard">
+    <div class="loading-ring"></div>
+    <p class="loading-label">Loading Pulse…</p>
+  </div>
+
   <div class="app-shell" hidden>
     <header class="topbar">
       <div class="topbar-brand">
@@ -65,6 +70,7 @@
           <button class="ghost-btn nav-trigger" type="button">User</button>
           <div class="nav-dropdown">
             <button id="openUserProfileButton" class="ghost-btn" type="button">User Profile</button>
+            <button id="openUserManagementButton" class="ghost-btn" type="button" hidden>User Management</button>
             <button id="openSettingsButton" class="ghost-btn" type="button">Settings</button>
           </div>
         </div>
@@ -383,10 +389,10 @@
             <tr>
               <th>Date</th>
               <th>Description</th>
+              <th>Amount</th>
               <th>Category</th>
               <th>Subcategory</th>
               <th>Trip</th>
-              <th>Amount</th>
             </tr>
           </thead>
           <tbody id="tripSummaryBody"></tbody>
@@ -618,6 +624,75 @@
         <button id="resetCategoryModelButton" class="ghost-btn" type="button">Reset To Default</button>
         <button id="saveCategoryModelButton" class="primary-btn" type="button">Save Categories</button>
       </div>
+    </section>
+  </div>
+
+  <div id="userProfileModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="userProfileTitle">
+      <div class="modal-header">
+        <h3 id="userProfileTitle">User Profile</h3>
+        <button id="closeUserProfileButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p class="modal-subtitle">Signed In As <strong id="userProfileDisplayName">-</strong></p>
+
+      <div class="savings-goal-grid" aria-label="Change PIN">
+        <label class="log-filter-field">
+          Current PIN
+          <input id="userProfileCurrentPin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" />
+        </label>
+        <label class="log-filter-field">
+          New PIN
+          <input id="userProfileNewPin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" />
+        </label>
+        <label class="log-filter-field">
+          Confirm New PIN
+          <input id="userProfileConfirmPin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" />
+        </label>
+      </div>
+
+      <div class="form-actions import-preview-actions">
+        <button id="saveUserProfilePinButton" class="primary-btn" type="button">Update PIN</button>
+      </div>
+      <p id="userProfileMessage" class="form-message" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <div id="userManagementModal" class="modal-backdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="userManagementTitle">
+      <div class="modal-header">
+        <h3 id="userManagementTitle">User Management</h3>
+        <button id="closeUserManagementButton" class="ghost-btn" type="button">Close</button>
+      </div>
+      <p class="modal-subtitle">Create And View Accounts That Can Sign In To Pulse</p>
+
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Role</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="userManagementBody"></tbody>
+        </table>
+      </div>
+
+      <div class="savings-goal-grid user-create-grid" aria-label="Create User">
+        <label class="log-filter-field">
+          Display Name
+          <input id="newUserDisplayName" type="text" placeholder="ex: Jane Doe" autocomplete="off" />
+        </label>
+        <label class="log-filter-field">
+          4-Digit PIN
+          <input id="newUserPin" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" autocomplete="off" />
+        </label>
+      </div>
+
+      <div class="form-actions import-preview-actions">
+        <button id="createUserButton" class="primary-btn" type="button">Create User</button>
+      </div>
+      <p id="userManagementMessage" class="form-message" aria-live="polite"></p>
     </section>
   </div>
 

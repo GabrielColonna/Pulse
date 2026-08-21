@@ -72,9 +72,22 @@ let CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
 const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
-const PRIVACY_PIN = "0307";
 const PRIVACY_GATE_ENABLED = true;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
+const DEBUG_TRANSACTION_LOAD = true;
+
+function logTransactionLoad(message, details) {
+  if (!DEBUG_TRANSACTION_LOAD) {
+    return;
+  }
+
+  if (details !== undefined) {
+    console.log(`[Pulse Debug] ${message}`, details);
+    return;
+  }
+
+  console.log(`[Pulse Debug] ${message}`);
+}
 
 function normalizeApiBase(rawBase) {
   const base = String(rawBase || "").trim();
@@ -95,13 +108,17 @@ function buildApiUrl(pathname) {
 }
 
 function apiFetch(pathname, options) {
-  return fetch(buildApiUrl(pathname), options);
+  return fetch(buildApiUrl(pathname), { credentials: "include", ...options });
 }
 
 const state = {
   transactions: [],
   trips: [],
   editingId: null,
+  currentUser: {
+    displayName: "",
+    isAdmin: false
+  },
   monthOffset: 0,
   monthLogDeleteMode: false,
   monthLogSelectedIds: new Set(),
@@ -150,6 +167,7 @@ const mobileNavMediaQuery = window.matchMedia("(max-width: 640px)");
 
 const els = {
   privacyGate: document.getElementById("privacyGate"),
+  loadingScreen: document.getElementById("loadingScreen"),
   privacyPinInput: document.getElementById("privacyPinInput"),
   privacyPinDigits: Array.from(document.querySelectorAll(".privacy-pin-digit")),
   privacyUnlockButton: document.getElementById("privacyUnlockButton"),
@@ -161,6 +179,22 @@ const els = {
   closeQuickAddButton: document.getElementById("closeQuickAddButton"),
   workspaceTools: document.querySelector(".workspace-tools"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
+  userProfileModal: document.getElementById("userProfileModal"),
+  closeUserProfileButton: document.getElementById("closeUserProfileButton"),
+  userProfileDisplayName: document.getElementById("userProfileDisplayName"),
+  userProfileCurrentPin: document.getElementById("userProfileCurrentPin"),
+  userProfileNewPin: document.getElementById("userProfileNewPin"),
+  userProfileConfirmPin: document.getElementById("userProfileConfirmPin"),
+  saveUserProfilePinButton: document.getElementById("saveUserProfilePinButton"),
+  userProfileMessage: document.getElementById("userProfileMessage"),
+  openUserManagementButton: document.getElementById("openUserManagementButton"),
+  userManagementModal: document.getElementById("userManagementModal"),
+  closeUserManagementButton: document.getElementById("closeUserManagementButton"),
+  userManagementBody: document.getElementById("userManagementBody"),
+  newUserDisplayName: document.getElementById("newUserDisplayName"),
+  newUserPin: document.getElementById("newUserPin"),
+  createUserButton: document.getElementById("createUserButton"),
+  userManagementMessage: document.getElementById("userManagementMessage"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   settingsModal: document.getElementById("settingsModal"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
@@ -410,7 +444,7 @@ function onPrivacyPinDigitInput(event) {
   }
 
   const enteredPin = getEnteredPrivacyPin();
-  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+  if (enteredPin.length === 4) {
     onPrivacyUnlockAttempt();
   }
 }
@@ -427,7 +461,7 @@ function onPrivacyPinDigitPaste(event) {
   setPrivacyPinDigitsFrom(index, pastedText);
 
   const enteredPin = getEnteredPrivacyPin();
-  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+  if (enteredPin.length === 4) {
     onPrivacyUnlockAttempt();
   }
 }
@@ -489,23 +523,42 @@ async function onPrivacyUnlockAttempt() {
   }
 
   const inputPin = getEnteredPrivacyPin();
-  if (inputPin !== PRIVACY_PIN) {
-    if (els.privacyError) {
-      els.privacyError.textContent = "Incorrect PIN. Try Again.";
-      els.privacyError.style.color = "#ff4766";
-    }
-    clearPrivacyPinEntry();
+  if (inputPin.length !== 4) {
     return;
   }
 
   isPrivacyUnlocking = true;
+  els.privacyUnlockButton.disabled = true;
+
+  let response;
+  try {
+    response = await apiFetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: inputPin })
+    });
+  } catch {
+    response = null;
+  }
+
+  if (!response || !response.ok) {
+    if (els.privacyError) {
+      els.privacyError.textContent = response && response.status === 429
+        ? "Too Many Attempts. Try Again Later."
+        : "Incorrect PIN. Try Again.";
+      els.privacyError.style.color = "#ff4766";
+    }
+    clearPrivacyPinEntry();
+    els.privacyUnlockButton.disabled = false;
+    isPrivacyUnlocking = false;
+    return;
+  }
 
   if (els.privacyError) {
     els.privacyError.textContent = "Access Granted.";
     els.privacyError.style.color = "#86ffb8";
   }
 
-  els.privacyUnlockButton.disabled = true;
   if (els.privacyPinInput) {
     els.privacyPinInput.disabled = true;
   }
@@ -517,14 +570,25 @@ async function onPrivacyUnlockAttempt() {
   await waitFor(1000);
 
   els.privacyGate.hidden = true;
-  els.appShell.hidden = false;
+  if (els.loadingScreen) {
+    els.loadingScreen.hidden = false;
+  }
   await initializeDashboard();
+
+  if (els.loadingScreen) {
+    els.loadingScreen.classList.add("loading-done");
+    await waitFor(420);
+    els.loadingScreen.hidden = true;
+  }
+  els.appShell.hidden = false;
 }
 
 async function initializeDashboard() {
   if (hasInitializedDashboard) {
     return;
   }
+
+  logTransactionLoad("initializeDashboard() start", { apiBase: API_BASE || "same-origin" });
 
   hasInitializedDashboard = true;
   hydrateSidebarState();
@@ -538,10 +602,17 @@ async function initializeDashboard() {
   if (els.recurrenceAccordion) {
     els.recurrenceAccordion.open = false;
   }
+  await refreshCurrentUser();
   await refreshTrips();
+  logTransactionLoad("Trips loaded for dashboard", { trips: state.trips.length });
   wireEvents();
   suggestCategoryFromDescription();
   await refreshTransactions();
+
+  logTransactionLoad("initializeDashboard() complete", {
+    transactionsInState: state.transactions.length,
+    activeMonthTransactions: getTransactionsForActiveMonth().length
+  });
 }
 
 function wireEvents() {
@@ -562,6 +633,21 @@ function wireEvents() {
   }
   if (els.openUserProfileButton) {
     els.openUserProfileButton.addEventListener("click", onOpenUserProfile);
+  }
+  if (els.closeUserProfileButton) {
+    els.closeUserProfileButton.addEventListener("click", closeUserProfileModal);
+  }
+  if (els.saveUserProfilePinButton) {
+    els.saveUserProfilePinButton.addEventListener("click", onSaveUserProfilePin);
+  }
+  if (els.openUserManagementButton) {
+    els.openUserManagementButton.addEventListener("click", openUserManagementModal);
+  }
+  if (els.closeUserManagementButton) {
+    els.closeUserManagementButton.addEventListener("click", closeUserManagementModal);
+  }
+  if (els.createUserButton) {
+    els.createUserButton.addEventListener("click", onCreateUser);
   }
   if (els.openSettingsButton) {
     els.openSettingsButton.addEventListener("click", onOpenSettings);
@@ -868,7 +954,211 @@ function toggleSidebarCollapsed() {
 }
 
 function onOpenUserProfile() {
-  setImportMessage("User Profile Is Coming Soon. This Slot Is Ready For Auth/Profile Integration.", false);
+  openUserProfileModal();
+}
+
+function openUserProfileModal() {
+  if (!els.userProfileModal) {
+    return;
+  }
+
+  if (els.userProfileDisplayName) {
+    els.userProfileDisplayName.textContent = state.currentUser.displayName || "-";
+  }
+  if (els.userProfileCurrentPin) {
+    els.userProfileCurrentPin.value = "";
+  }
+  if (els.userProfileNewPin) {
+    els.userProfileNewPin.value = "";
+  }
+  if (els.userProfileConfirmPin) {
+    els.userProfileConfirmPin.value = "";
+  }
+  if (els.userProfileMessage) {
+    els.userProfileMessage.textContent = "";
+  }
+
+  els.userProfileModal.hidden = false;
+}
+
+function closeUserProfileModal() {
+  if (!els.userProfileModal) {
+    return;
+  }
+  els.userProfileModal.hidden = true;
+}
+
+async function onSaveUserProfilePin() {
+  const currentPin = String(els.userProfileCurrentPin?.value || "").trim();
+  const newPin = String(els.userProfileNewPin?.value || "").trim();
+  const confirmPin = String(els.userProfileConfirmPin?.value || "").trim();
+
+  if (!/^\d{4}$/.test(newPin)) {
+    setUserProfileMessage("New PIN Must Be 4 Digits.", true);
+    return;
+  }
+
+  if (newPin !== confirmPin) {
+    setUserProfileMessage("New PIN And Confirmation Do Not Match.", true);
+    return;
+  }
+
+  try {
+    const response = await apiFetch("/api/me/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPin, newPin })
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Update PIN"));
+    }
+
+    setUserProfileMessage("PIN Updated Successfully.", false);
+    if (els.userProfileCurrentPin) {
+      els.userProfileCurrentPin.value = "";
+    }
+    if (els.userProfileNewPin) {
+      els.userProfileNewPin.value = "";
+    }
+    if (els.userProfileConfirmPin) {
+      els.userProfileConfirmPin.value = "";
+    }
+  } catch (error) {
+    setUserProfileMessage(error.message || "Could Not Update PIN.", true);
+  }
+}
+
+function setUserProfileMessage(message, isError) {
+  if (!els.userProfileMessage) {
+    return;
+  }
+  els.userProfileMessage.textContent = message;
+  els.userProfileMessage.style.color = isError ? "#ff4766" : "#35ff86";
+}
+
+function openUserManagementModal() {
+  if (!els.userManagementModal) {
+    return;
+  }
+
+  if (els.newUserDisplayName) {
+    els.newUserDisplayName.value = "";
+  }
+  if (els.newUserPin) {
+    els.newUserPin.value = "";
+  }
+  if (els.userManagementMessage) {
+    els.userManagementMessage.textContent = "";
+  }
+
+  els.userManagementModal.hidden = false;
+  refreshUserManagementList();
+}
+
+function closeUserManagementModal() {
+  if (!els.userManagementModal) {
+    return;
+  }
+  els.userManagementModal.hidden = true;
+}
+
+async function refreshUserManagementList() {
+  if (!els.userManagementBody) {
+    return;
+  }
+
+  els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">Loading...</td></tr>';
+
+  try {
+    const response = await apiFetch("/api/users");
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Load Users"));
+    }
+
+    const users = await response.json();
+    if (!Array.isArray(users) || !users.length) {
+      els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">No Users Found.</td></tr>';
+      return;
+    }
+
+    els.userManagementBody.innerHTML = users
+      .map((user) => `
+        <tr>
+          <td>${escapeHtml(user.displayName)}</td>
+          <td>${user.isAdmin ? "Admin" : "Member"}</td>
+          <td>${formatDateForDisplay(new Date(Number(user.createdAt)).toISOString().slice(0, 10))}</td>
+        </tr>
+      `)
+      .join("");
+  } catch (error) {
+    els.userManagementBody.innerHTML = `<tr><td colspan="3" class="empty-state">${escapeHtml(error.message || "Could Not Load Users.")}</td></tr>`;
+  }
+}
+
+async function onCreateUser() {
+  const displayName = String(els.newUserDisplayName?.value || "").trim();
+  const pin = String(els.newUserPin?.value || "").trim();
+
+  if (!displayName) {
+    setUserManagementMessage("Display Name Is Required.", true);
+    return;
+  }
+
+  if (!/^\d{4}$/.test(pin)) {
+    setUserManagementMessage("PIN Must Be 4 Digits.", true);
+    return;
+  }
+
+  try {
+    const response = await apiFetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName, pin })
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Create User"));
+    }
+
+    setUserManagementMessage(`User Created: ${displayName}`, false);
+    if (els.newUserDisplayName) {
+      els.newUserDisplayName.value = "";
+    }
+    if (els.newUserPin) {
+      els.newUserPin.value = "";
+    }
+    refreshUserManagementList();
+  } catch (error) {
+    setUserManagementMessage(error.message || "Could Not Create User.", true);
+  }
+}
+
+function setUserManagementMessage(message, isError) {
+  if (!els.userManagementMessage) {
+    return;
+  }
+  els.userManagementMessage.textContent = message;
+  els.userManagementMessage.style.color = isError ? "#ff4766" : "#35ff86";
+}
+
+async function refreshCurrentUser() {
+  try {
+    const response = await apiFetch("/api/me");
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    state.currentUser.displayName = data.displayName || "";
+    state.currentUser.isAdmin = Boolean(data.isAdmin);
+  } catch {
+    // Leave currentUser at its defaults if this fails; UI simply won't show admin-only controls.
+  }
+
+  if (els.openUserManagementButton) {
+    els.openUserManagementButton.hidden = !state.currentUser.isAdmin;
+  }
 }
 
 function onOpenSettings() {
@@ -1741,6 +2031,16 @@ function onModalBackdropClick(event) {
 
   if (event.target === els.savingsModal) {
     closeSavingsModal();
+    return;
+  }
+
+  if (event.target === els.userProfileModal) {
+    closeUserProfileModal();
+    return;
+  }
+
+  if (event.target === els.userManagementModal) {
+    closeUserManagementModal();
   }
 }
 
@@ -1943,13 +2243,46 @@ function getTransactionsForActiveMonth() {
 
 async function refreshTransactions() {
   try {
+    logTransactionLoad("Requesting transactions from API", {
+      endpoint: buildApiUrl("/api/transactions")
+    });
+
     const response = await apiFetch("/api/transactions");
     if (!response.ok) {
       throw new Error("Could Not Fetch Transactions");
     }
 
-    state.transactions = await response.json();
+    const transactions = await response.json();
+
+    logTransactionLoad("Transactions response received", {
+      httpStatus: response.status,
+      rowCount: Array.isArray(transactions) ? transactions.length : 0
+    });
+
+    if (Array.isArray(transactions) && transactions.length) {
+      const sampleRows = transactions.slice(0, 5).map((tx) => ({
+        id: tx.id,
+        date: tx.date,
+        description: tx.description,
+        type: tx.type,
+        parentCategory: normalizeLegacyParentCategory(tx.parentCategory),
+        category: normalizeLegacyCategoryLabel(tx.category),
+        amount: Number(tx.amount)
+      }));
+      logTransactionLoad("Sample rows (first 5)", sampleRows);
+    }
+
+    state.transactions = transactions;
+    logTransactionLoad("State assigned from API payload", {
+      transactionsInState: state.transactions.length
+    });
+
     render();
+
+    logTransactionLoad("Render completed after transaction load", {
+      recentEntriesRendered: Math.min(10, state.transactions.length),
+      activeMonthTransactions: getTransactionsForActiveMonth().length
+    });
   } catch {
     setMessage("Unable To Load Dashboard Data From Server.", true);
   }
@@ -3466,10 +3799,10 @@ function renderTripSummary() {
       <tr>
         <td>${formatDateForDisplay(tx.date)}</td>
         <td>${escapeHtml(tx.description)}</td>
+        <td>${formatMoney(amount)}</td>
         <td>${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
         <td>${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
         <td>${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
-        <td>${formatMoney(amount)}</td>
       </tr>
     `;
     })

@@ -1,14 +1,15 @@
 const crypto = require("crypto");
+const dns = require("dns");
 const fs = require("fs");
 const path = require("path");
 
 const express = require("express");
 const multer = require("multer");
-const sqlite3 = require("sqlite3").verbose();
+const { Pool } = require("pg");
 const xlsx = require("xlsx");
 
 const PORT = Number(process.env.PORT) || 4100;
-const DB_PATH = path.join(__dirname, "budget.db");
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 const CLIENT_ORIGINS = String(process.env.CLIENT_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -16,9 +17,18 @@ const CLIENT_ORIGINS = String(process.env.CLIENT_ORIGINS || "")
 const ALLOW_ALL_ORIGINS = CLIENT_ORIGINS.includes("*");
 
 const app = express();
+app.set("trust proxy", 1);
 const upload = multer({ dest: path.join(__dirname, "uploads") });
 const IMPORT_PREVIEW_TTL_MS = 30 * 60 * 1000;
 const importPreviewCache = new Map();
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  family: 4,
+  lookup: (hostname, options, callback) => dns.lookup(hostname, { ...options, family: 4 }, callback),
+  ssl: DATABASE_URL && !DATABASE_URL.includes("localhost") && !DATABASE_URL.includes("127.0.0.1")
+    ? { rejectUnauthorized: false }
+    : false
+});
 
 app.use(express.json());
 app.use((req, res, next) => {
@@ -31,7 +41,9 @@ app.use((req, res, next) => {
 
   const isAllowed = ALLOW_ALL_ORIGINS || CLIENT_ORIGINS.includes(origin);
   if (isAllowed) {
-    res.setHeader("Access-Control-Allow-Origin", ALLOW_ALL_ORIGINS ? "*" : origin);
+    // Credentialed (cookie) requests cannot use the "*" wildcard, so always echo the exact origin.
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -45,8 +57,6 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(__dirname));
-
-const db = new sqlite3.Database(DB_PATH);
 
 const categoryModel = {
   income: [
@@ -283,105 +293,312 @@ const legacyAliases = {
   "OTHER EXPENSE": { parentCategory: "Expenses", category: "Losses" }
 };
 
-db.serialize(() => {
-  db.run(`
-    CREATE TABLE IF NOT EXISTS trips (
+function toPgSql(sql) {
+  let index = 0;
+  return String(sql).replace(/\?/g, () => `$${++index}`);
+}
+
+async function dbQuery(sql, params = []) {
+  return pool.query(toPgSql(sql), params);
+}
+
+function dbRun(sql, params = []) {
+  return dbQuery(sql, params).then((result) => ({
+    changes: result.rowCount,
+    rows: result.rows
+  }));
+}
+
+function dbAll(sql, params = []) {
+  return dbQuery(sql, params).then((result) => result.rows);
+}
+
+function dbGet(sql, params = []) {
+  return dbQuery(sql, params).then((result) => result.rows[0]);
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+const SESSION_COOKIE_NAME = "pulse_session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+// Seeded for the pre-existing single-user data during the multi-user migration.
+const DEFAULT_OWNER_NAME = "Gabriel Colonna";
+const DEFAULT_OWNER_PIN = "0307";
+
+function hashPin(pin) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(pin), salt, 64).toString("hex");
+  return { hash, salt };
+}
+
+function verifyPin(pin, hash, salt) {
+  const candidate = crypto.scryptSync(String(pin), salt, 64);
+  const stored = Buffer.from(String(hash || ""), "hex");
+  if (candidate.length !== stored.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(candidate, stored);
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  const cookies = {};
+  if (!header) {
+    return cookies;
+  }
+
+  header.split(";").forEach((part) => {
+    const index = part.indexOf("=");
+    if (index === -1) {
+      return;
+    }
+    cookies[part.slice(0, index).trim()] = decodeURIComponent(part.slice(index + 1).trim());
+  });
+
+  return cookies;
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  const attributes = [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Expires=${new Date(expiresAt).toUTCString()}`
+  ];
+  if (IS_PRODUCTION) {
+    attributes.push("Secure");
+  }
+  res.setHeader("Set-Cookie", attributes.join("; "));
+}
+
+function clearSessionCookie(res) {
+  const attributes = [
+    `${SESSION_COOKIE_NAME}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+  ];
+  if (IS_PRODUCTION) {
+    attributes.push("Secure");
+  }
+  res.setHeader("Set-Cookie", attributes.join("; "));
+}
+
+async function createSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const createdAt = Date.now();
+  const expiresAt = createdAt + SESSION_TTL_MS;
+  await dbRun(
+    "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+    [token, userId, createdAt, expiresAt]
+  );
+  return { token, expiresAt };
+}
+
+async function getSessionUser(token) {
+  if (!token) {
+    return null;
+  }
+
+  const row = await dbGet(
+    `SELECT s.user_id AS "userId", s.expires_at AS "expiresAt", u.display_name AS "displayName", u.is_admin AS "isAdmin"
+     FROM sessions s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.token = ?`,
+    [token]
+  );
+
+  if (!row || Number(row.expiresAt) < Date.now()) {
+    return null;
+  }
+
+  return { userId: row.userId, displayName: row.displayName, isAdmin: Boolean(row.isAdmin) };
+}
+
+async function destroySession(token) {
+  if (!token) {
+    return;
+  }
+  await dbRun("DELETE FROM sessions WHERE token = ?", [token]);
+}
+
+async function requireAuth(req, res, next) {
+  const cookies = parseCookies(req);
+  const session = await getSessionUser(cookies[SESSION_COOKIE_NAME]);
+  if (!session) {
+    res.status(401).json({ error: "Not Authenticated" });
+    return;
+  }
+
+  req.userId = session.userId;
+  req.displayName = session.displayName;
+  req.isAdmin = session.isAdmin;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) {
+    res.status(403).json({ error: "Admin Access Required" });
+    return;
+  }
+  next();
+}
+
+const loginAttempts = new Map();
+const LOGIN_MAX_ATTEMPTS = 8;
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
+
+function isLoginRateLimited(key) {
+  const entry = loginAttempts.get(key);
+  if (!entry) {
+    return false;
+  }
+  if (Date.now() - entry.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttempts.delete(key);
+    return false;
+  }
+  return entry.count >= LOGIN_MAX_ATTEMPTS;
+}
+
+function recordLoginAttempt(key) {
+  const entry = loginAttempts.get(key);
+  if (!entry || Date.now() - entry.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, { count: 1, firstAttemptAt: Date.now() });
+    return;
+  }
+  entry.count += 1;
+}
+
+async function ensureDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      start_date TEXT,
-      end_date TEXT,
-      created_at INTEGER NOT NULL,
-      archived INTEGER NOT NULL DEFAULT 0
+      display_name TEXT NOT NULL,
+      pin_hash TEXT NOT NULL,
+      pin_salt TEXT NOT NULL,
+      is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at BIGINT NOT NULL
     )
   `);
 
-  db.run(`
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trips (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      created_at BIGINT NOT NULL,
+      archived BOOLEAN NOT NULL DEFAULT FALSE
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS transactions (
       id TEXT PRIMARY KEY,
       date TEXT NOT NULL,
       description TEXT NOT NULL,
       parent_category TEXT,
-      trip_id TEXT,
+      trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       category TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
       amount REAL NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at BIGINT NOT NULL
     )
   `);
 
-  db.run("ALTER TABLE transactions ADD COLUMN parent_category TEXT", () => {});
-  db.run("ALTER TABLE transactions ADD COLUMN trip_id TEXT", () => {});
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS parent_category TEXT");
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS trip_id TEXT");
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
+  await pool.query("ALTER TABLE trips ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE");
+  await pool.query("ALTER TABLE trips ALTER COLUMN archived TYPE BOOLEAN USING archived::boolean");
+  await pool.query("ALTER TABLE trips ALTER COLUMN archived SET DEFAULT FALSE");
+  await pool.query("ALTER TABLE trips DROP COLUMN IF EXISTS start_date");
+  await pool.query("ALTER TABLE trips DROP COLUMN IF EXISTS end_date");
+  await pool.query("ALTER TABLE trips ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE");
 
-  // Keep historical data consistent with current category naming.
-  db.run("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
-  db.run("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
-  db.run("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
-  db.run("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
-
-  // Fix incorrectly stored Necessities transactions (health-related expenses saved as Personal > Other)
-  const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
-  const healthPattern = new RegExp(healthKeywords.join("|"), "i");
-  
-  db.all(
-    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'",
-    (err, rows) => {
-      if (err || !rows) return;
-      
-      rows.forEach((row) => {
-        if (healthPattern.test(row.description)) {
-          db.run(
-            "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = ?",
-            [row.id]
-          );
-        }
-      });
-    }
+  // Trip names are now unique per user rather than globally.
+  await pool.query("ALTER TABLE trips DROP CONSTRAINT IF EXISTS trips_name_key");
+  const existingConstraint = await dbGet(
+    "SELECT 1 AS found FROM pg_constraint WHERE conname = 'trips_user_id_name_key'"
   );
-});
-
-function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(error) {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(this);
-    });
-  });
-}
-
-function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (error, rows) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(rows);
-    });
-  });
-}
-
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (error, row) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(row);
-    });
-  });
-}
-
-async function resolveTripId(rawTripId) {
-  const cleanTripId = String(rawTripId || "").trim();
-  if (!cleanTripId) {
-    return "";
+  if (!existingConstraint) {
+    await pool.query("ALTER TABLE trips ADD CONSTRAINT trips_user_id_name_key UNIQUE (user_id, name)");
   }
 
-  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND archived = 0", [cleanTripId]);
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE");
+
+  const userCount = await dbGet("SELECT COUNT(*)::int AS count FROM users");
+  if (!userCount || Number(userCount.count) === 0) {
+    const { hash, salt } = hashPin(DEFAULT_OWNER_PIN);
+    const defaultUserId = crypto.randomUUID();
+    await dbRun(
+      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, created_at) VALUES (?, ?, ?, ?, TRUE, ?)",
+      [defaultUserId, DEFAULT_OWNER_NAME, hash, salt, Date.now()]
+    );
+    await pool.query("UPDATE trips SET user_id = $1 WHERE user_id IS NULL", [defaultUserId]);
+    await pool.query("UPDATE transactions SET user_id = $1 WHERE user_id IS NULL", [defaultUserId]);
+  }
+
+  const adminCount = await dbGet("SELECT COUNT(*)::int AS count FROM users WHERE is_admin = TRUE");
+  if (!adminCount || Number(adminCount.count) === 0) {
+    // No admin exists yet (e.g. users table predates is_admin) - promote the original account.
+    await pool.query("UPDATE users SET is_admin = TRUE WHERE id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)");
+  }
+
+  await pool.query("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
+  await pool.query("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
+  await pool.query("UPDATE transactions SET category = 'Other Car' WHERE parent_category = 'Car' AND category = 'Other'");
+  await pool.query("UPDATE transactions SET category = 'Transportation' WHERE parent_category = 'Travel' AND category = 'Rental'");
+
+  const healthKeywords = ["doctor", "dentist", "dental", "medicine", "medication", "prescription", "pharmacy", "glasses", "contacts", "vision", "optometrist", "clinic", "hospital", "urgent care", "copay", "therapy", "health"];
+  const healthPattern = new RegExp(healthKeywords.join("|"), "i");
+
+  const result = await pool.query(
+    "SELECT id, description FROM transactions WHERE parent_category = 'Personal' AND category = 'Other' AND type = 'expense'"
+  );
+
+  for (const row of result.rows) {
+    if (healthPattern.test(row.description)) {
+      await pool.query(
+        "UPDATE transactions SET parent_category = 'Expenses', category = 'Necessities' WHERE id = $1",
+        [row.id]
+      );
+    }
+  }
+}
+
+async function resolveTripId(rawTripId, userId) {
+  const cleanTripId = String(rawTripId || "").trim();
+  if (!cleanTripId) {
+    return null;
+  }
+
+  const trip = await dbGet("SELECT id FROM trips WHERE id = ? AND user_id = ? AND archived = FALSE", [cleanTripId, userId]);
   if (!trip) {
     const error = new Error("Trip Not Found");
     error.code = "TRIP_NOT_FOUND";
@@ -391,22 +608,22 @@ async function resolveTripId(rawTripId) {
   return trip.id;
 }
 
-async function findOrCreateTripByName(rawName) {
+async function findOrCreateTripByName(rawName, userId) {
   const cleanName = String(rawName || "").trim();
   if (!cleanName) {
-    return "";
+    return null;
   }
 
-  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+  const existing = await dbGet("SELECT id FROM trips WHERE lower(name) = lower(?) AND user_id = ? AND archived = FALSE", [cleanName, userId]);
   if (existing?.id) {
     return existing.id;
   }
 
   const id = crypto.randomUUID();
   await dbRun(
-    `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
-     VALUES (?, ?, ?, ?, ?, 0)`,
-    [id, cleanName, "", "", Date.now()]
+    `INSERT INTO trips (id, name, user_id, created_at, archived)
+     VALUES (?, ?, ?, ?, FALSE)`,
+    [id, cleanName, userId, Date.now()]
   );
 
   return id;
@@ -679,8 +896,8 @@ function buildDuplicateKey(tx) {
   return `${normalizeDate(tx.date)}|${normalizedDescription}|${tx.type}|${amount}`;
 }
 
-async function getExistingDuplicateKeys() {
-  const rows = await dbAll("SELECT date, description, type, amount FROM transactions");
+async function getExistingDuplicateKeys(userId) {
+  const rows = await dbAll("SELECT date, description, type, amount FROM transactions WHERE user_id = ?", [userId]);
   return new Set(rows.map((row) => buildDuplicateKey(row)));
 }
 
@@ -767,13 +984,138 @@ function toTransaction(row, mapping) {
   };
 }
 
-app.get("/api/trips", async (req, res) => {
+app.post("/api/login", async (req, res) => {
+  const rateLimitKey = req.ip || req.socket.remoteAddress || "unknown";
+  if (isLoginRateLimited(rateLimitKey)) {
+    res.status(429).json({ error: "Too Many Attempts. Try Again Later." });
+    return;
+  }
+
+  const pin = String(req.body?.pin || "").trim();
+  if (!/^\d{4}$/.test(pin)) {
+    res.status(400).json({ error: "Invalid PIN" });
+    return;
+  }
+
+  try {
+    const users = await dbAll(
+      "SELECT id, display_name AS \"displayName\", pin_hash AS \"pinHash\", pin_salt AS \"pinSalt\" FROM users"
+    );
+    const matchedUser = users.find((user) => verifyPin(pin, user.pinHash, user.pinSalt));
+
+    if (!matchedUser) {
+      recordLoginAttempt(rateLimitKey);
+      res.status(401).json({ error: "Incorrect PIN" });
+      return;
+    }
+
+    loginAttempts.delete(rateLimitKey);
+    const session = await createSession(matchedUser.id);
+    setSessionCookie(res, session.token, session.expiresAt);
+    res.json({ displayName: matchedUser.displayName });
+  } catch {
+    res.status(500).json({ error: "Failed To Log In" });
+  }
+});
+
+app.post("/api/logout", async (req, res) => {
+  const cookies = parseCookies(req);
+  await destroySession(cookies[SESSION_COOKIE_NAME]);
+  clearSessionCookie(res);
+  res.json({ ok: true });
+});
+
+app.get("/api/me", async (req, res) => {
+  const cookies = parseCookies(req);
+  const session = await getSessionUser(cookies[SESSION_COOKIE_NAME]);
+  if (!session) {
+    res.status(401).json({ error: "Not Authenticated" });
+    return;
+  }
+  res.json({ displayName: session.displayName, isAdmin: session.isAdmin });
+});
+
+app.post("/api/me/pin", requireAuth, async (req, res) => {
+  const currentPin = String(req.body?.currentPin || "").trim();
+  const newPin = String(req.body?.newPin || "").trim();
+
+  if (!/^\d{4}$/.test(newPin)) {
+    res.status(400).json({ error: "New PIN Must Be 4 Digits" });
+    return;
+  }
+
+  try {
+    const user = await dbGet(
+      "SELECT pin_hash AS \"pinHash\", pin_salt AS \"pinSalt\" FROM users WHERE id = ?",
+      [req.userId]
+    );
+
+    if (!user || !verifyPin(currentPin, user.pinHash, user.pinSalt)) {
+      res.status(401).json({ error: "Current PIN Is Incorrect" });
+      return;
+    }
+
+    const { hash, salt } = hashPin(newPin);
+    await dbRun("UPDATE users SET pin_hash = ?, pin_salt = ? WHERE id = ?", [hash, salt, req.userId]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed To Update PIN" });
+  }
+});
+
+app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await dbAll(
+      `SELECT id, display_name AS "displayName", is_admin AS "isAdmin", created_at AS "createdAt"
+       FROM users
+       ORDER BY created_at ASC`
+    );
+    res.json(users);
+  } catch {
+    res.status(500).json({ error: "Failed To Load Users" });
+  }
+});
+
+app.post("/api/users", async (req, res) => {
+  const cookies = parseCookies(req);
+  const session = await getSessionUser(cookies[SESSION_COOKIE_NAME]);
+  const requiredKey = String(process.env.ADMIN_SETUP_KEY || "");
+  const setupKey = String(req.body?.setupKey || "");
+  const isAuthorized = (session && session.isAdmin) || (requiredKey && setupKey === requiredKey);
+
+  if (!isAuthorized) {
+    res.status(403).json({ error: "Not Authorized To Create Users" });
+    return;
+  }
+
+  const displayName = String(req.body?.displayName || "").trim();
+  const pin = String(req.body?.pin || "").trim();
+  if (!displayName || !/^\d{4}$/.test(pin)) {
+    res.status(400).json({ error: "Display Name And 4-Digit PIN Are Required" });
+    return;
+  }
+
+  try {
+    const { hash, salt } = hashPin(pin);
+    const id = crypto.randomUUID();
+    await dbRun(
+      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, created_at) VALUES (?, ?, ?, ?, FALSE, ?)",
+      [id, displayName, hash, salt, Date.now()]
+    );
+    res.status(201).json({ id, displayName, isAdmin: false, createdAt: Date.now() });
+  } catch {
+    res.status(500).json({ error: "Failed To Create User" });
+  }
+});
+
+app.get("/api/trips", requireAuth, async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+      `SELECT id, name, archived, created_at AS "createdAt"
        FROM trips
-       WHERE archived = 0
-       ORDER BY name COLLATE NOCASE ASC`
+      WHERE user_id = ? AND archived = FALSE
+       ORDER BY LOWER(name) ASC`,
+      [req.userId]
     );
 
     res.json(rows);
@@ -782,7 +1124,7 @@ app.get("/api/trips", async (req, res) => {
   }
 });
 
-app.post("/api/trips", async (req, res) => {
+app.post("/api/trips", requireAuth, async (req, res) => {
   const cleanName = String(req.body?.name || "").trim();
   if (!cleanName) {
     res.status(400).json({ error: "Trip Name Is Required" });
@@ -790,7 +1132,10 @@ app.post("/api/trips", async (req, res) => {
   }
 
   try {
-    const existing = await dbGet("SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt FROM trips WHERE lower(name) = lower(?) AND archived = 0", [cleanName]);
+    const existing = await dbGet(
+      "SELECT id, name, archived, created_at AS \"createdAt\" FROM trips WHERE lower(name) = lower(?) AND user_id = ? AND archived = FALSE",
+      [cleanName, req.userId]
+    );
     if (existing) {
       res.json(existing);
       return;
@@ -799,16 +1144,14 @@ app.post("/api/trips", async (req, res) => {
     const trip = {
       id: crypto.randomUUID(),
       name: cleanName,
-      startDate: "",
-      endDate: "",
-      archived: 0,
+      archived: false,
       createdAt: Date.now()
     };
 
     await dbRun(
-      `INSERT INTO trips (id, name, start_date, end_date, created_at, archived)
-       VALUES (?, ?, ?, ?, ?, ?)` ,
-      [trip.id, trip.name, trip.startDate, trip.endDate, trip.createdAt, trip.archived]
+      `INSERT INTO trips (id, name, user_id, created_at, archived)
+       VALUES (?, ?, ?, ?, ?)` ,
+      [trip.id, trip.name, req.userId, trip.createdAt, trip.archived]
     );
 
     res.status(201).json(trip);
@@ -817,7 +1160,7 @@ app.post("/api/trips", async (req, res) => {
   }
 });
 
-app.put("/api/trips/:id", async (req, res) => {
+app.put("/api/trips/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const cleanName = String(req.body?.name || "").trim();
 
@@ -828,8 +1171,8 @@ app.put("/api/trips/:id", async (req, res) => {
 
   try {
     const existing = await dbGet(
-      "SELECT id FROM trips WHERE id = ? AND archived = 0",
-      [id]
+      "SELECT id FROM trips WHERE id = ? AND user_id = ? AND archived = FALSE",
+      [id, req.userId]
     );
 
     if (!existing) {
@@ -838,8 +1181,8 @@ app.put("/api/trips/:id", async (req, res) => {
     }
 
     const duplicate = await dbGet(
-      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND archived = 0",
-      [cleanName, id]
+      "SELECT id FROM trips WHERE lower(name) = lower(?) AND id != ? AND user_id = ? AND archived = FALSE",
+      [cleanName, id, req.userId]
     );
 
     if (duplicate) {
@@ -847,13 +1190,13 @@ app.put("/api/trips/:id", async (req, res) => {
       return;
     }
 
-    await dbRun("UPDATE trips SET name = ? WHERE id = ?", [cleanName, id]);
+    await dbRun("UPDATE trips SET name = ? WHERE id = ? AND user_id = ?", [cleanName, id, req.userId]);
 
     const updated = await dbGet(
-      `SELECT id, name, COALESCE(start_date, '') AS startDate, COALESCE(end_date, '') AS endDate, archived, created_at AS createdAt
+      `SELECT id, name, archived, created_at AS "createdAt"
        FROM trips
-       WHERE id = ?`,
-      [id]
+       WHERE id = ? AND user_id = ?`,
+      [id, req.userId]
     );
 
     res.json(updated);
@@ -862,7 +1205,7 @@ app.put("/api/trips/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/trips/:id", async (req, res) => {
+app.delete("/api/trips/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   if (!id) {
     res.status(400).json({ error: "Trip Id Is Required" });
@@ -870,38 +1213,39 @@ app.delete("/api/trips/:id", async (req, res) => {
   }
 
   try {
-    await dbRun("BEGIN TRANSACTION");
+    const deleteResult = await withTransaction(async (client) => {
+      const detachResult = await client.query(
+        toPgSql("UPDATE transactions SET trip_id = NULL WHERE trip_id = ? AND user_id = ?"),
+        [id, req.userId]
+      );
 
-    const detachResult = await dbRun(
-      "UPDATE transactions SET trip_id = '' WHERE trip_id = ?",
-      [id]
-    );
+      const deleted = await client.query(toPgSql("DELETE FROM trips WHERE id = ? AND user_id = ?"), [id, req.userId]);
 
-    const deleteResult = await dbRun(
-      "DELETE FROM trips WHERE id = ?",
-      [id]
-    );
+      return {
+        detachedTransactions: detachResult.rowCount,
+        deleted: deleted.rowCount
+      };
+    });
 
-    if (!deleteResult.changes) {
-      await dbRun("ROLLBACK");
+    if (!deleteResult.deleted) {
       res.status(404).json({ error: "Trip Not Found" });
       return;
     }
 
-    await dbRun("COMMIT");
-    res.json({ ok: true, detachedTransactions: detachResult.changes || 0 });
+    res.json({ ok: true, detachedTransactions: deleteResult.detachedTransactions || 0 });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Delete Trip" });
   }
 });
 
-app.get("/api/transactions", async (req, res) => {
+app.get("/api/transactions", requireAuth, async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
-       ORDER BY created_at DESC`
+       WHERE user_id = ?
+       ORDER BY created_at DESC`,
+      [req.userId]
     );
 
     res.json(rows);
@@ -910,7 +1254,7 @@ app.get("/api/transactions", async (req, res) => {
   }
 });
 
-app.get("/api/transactions/search", async (req, res) => {
+app.get("/api/transactions/search", requireAuth, async (req, res) => {
   const query = String(req.query.q || "").trim().toLowerCase();
   if (!query) {
     res.json([]);
@@ -921,16 +1265,17 @@ app.get("/api/transactions/search", async (req, res) => {
 
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
-       WHERE lower(description) LIKE ?
+       WHERE user_id = ?
+         AND (lower(description) LIKE ?
           OR lower(COALESCE(parent_category, '')) LIKE ?
           OR lower(COALESCE(category, '')) LIKE ?
           OR lower(type) LIKE ?
-          OR lower(date) LIKE ?
+          OR lower(date) LIKE ?)
        ORDER BY date DESC, created_at DESC
        LIMIT 250`,
-      [likeQuery, likeQuery, likeQuery, likeQuery, likeQuery]
+      [req.userId, likeQuery, likeQuery, likeQuery, likeQuery, likeQuery]
     );
 
     res.json(rows);
@@ -939,7 +1284,7 @@ app.get("/api/transactions/search", async (req, res) => {
   }
 });
 
-app.post("/api/transactions", async (req, res) => {
+app.post("/api/transactions", requireAuth, async (req, res) => {
   const { description, amount, type, date, category, parentCategory, tripId, recurrenceFrequency, recurrenceCount } = req.body || {};
   const cleanDescription = String(description || "").trim();
   const cleanType = type === "income" ? "income" : "expense";
@@ -969,36 +1314,36 @@ app.post("/api/transactions", async (req, res) => {
   const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
 
   try {
-    const cleanTripId = await resolveTripId(tripId);
+    const cleanTripId = await resolveTripId(tripId, req.userId);
 
     const entriesToCreate = cleanFrequency === "none" ? 1 : cleanRecurrenceCount;
     const created = [];
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (let i = 0; i < entriesToCreate; i += 1) {
+        const tx = {
+          id: crypto.randomUUID(),
+          date: shiftDateByFrequency(cleanDate, cleanFrequency, i),
+          description: cleanDescription,
+          parentCategory: normalized.parentCategory,
+          tripId: cleanTripId,
+          category: normalized.category,
+          type: cleanType,
+          amount: cleanAmount,
+          createdAt: Date.now() + i
+        };
 
-    for (let i = 0; i < entriesToCreate; i += 1) {
-      const tx = {
-        id: crypto.randomUUID(),
-        date: shiftDateByFrequency(cleanDate, cleanFrequency, i),
-        description: cleanDescription,
-        parentCategory: normalized.parentCategory,
-        tripId: cleanTripId,
-        category: normalized.category,
-        type: cleanType,
-        amount: cleanAmount,
-        createdAt: Date.now() + i
-      };
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, user_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, req.userId, tx.category, tx.type, tx.amount, tx.createdAt]
+        );
 
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.id, tx.date, tx.description, tx.parentCategory, tx.tripId, tx.category, tx.type, tx.amount, tx.createdAt]
-      );
-
-      created.push(tx);
-    }
-
-    await dbRun("COMMIT");
+        created.push(tx);
+      }
+    });
 
     if (created.length === 1) {
       res.status(201).json(created[0]);
@@ -1007,7 +1352,6 @@ app.post("/api/transactions", async (req, res) => {
 
     res.status(201).json({ created });
   } catch (error) {
-    await dbRun("ROLLBACK").catch(() => {});
     if (error?.code === "TRIP_NOT_FOUND") {
       res.status(400).json({ error: "Selected Trip Does Not Exist" });
       return;
@@ -1016,7 +1360,7 @@ app.post("/api/transactions", async (req, res) => {
   }
 });
 
-app.put("/api/transactions/:id", async (req, res) => {
+app.put("/api/transactions/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const { description, amount, type, date, category, parentCategory, tripId } = req.body || {};
 
@@ -1033,13 +1377,13 @@ app.put("/api/transactions/:id", async (req, res) => {
   const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
 
   try {
-    const cleanTripId = await resolveTripId(tripId);
+    const cleanTripId = await resolveTripId(tripId, req.userId);
 
     const result = await dbRun(
       `UPDATE transactions
        SET date = ?, description = ?, parent_category = ?, trip_id = ?, category = ?, type = ?, amount = ?
-       WHERE id = ?`,
-      [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, cleanType, cleanAmount, id]
+       WHERE id = ? AND user_id = ?`,
+      [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, cleanType, cleanAmount, id, req.userId]
     );
 
     if (!result.changes) {
@@ -1048,10 +1392,10 @@ app.put("/api/transactions/:id", async (req, res) => {
     }
 
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS parentCategory, COALESCE(trip_id, '') AS tripId, category, type, amount, created_at AS createdAt
+      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
        FROM transactions
-       WHERE id = ?`,
-      [id]
+       WHERE id = ? AND user_id = ?`,
+      [id, req.userId]
     );
 
     res.json(rows[0]);
@@ -1064,9 +1408,9 @@ app.put("/api/transactions/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/transactions/:id", async (req, res) => {
+app.delete("/api/transactions/:id", requireAuth, async (req, res) => {
   try {
-    const result = await dbRun("DELETE FROM transactions WHERE id = ?", [req.params.id]);
+    const result = await dbRun("DELETE FROM transactions WHERE id = ? AND user_id = ?", [req.params.id, req.userId]);
     if (!result.changes) {
       res.status(404).json({ error: "Transaction Not Found" });
       return;
@@ -1078,16 +1422,16 @@ app.delete("/api/transactions/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/transactions", async (req, res) => {
+app.delete("/api/transactions", requireAuth, async (req, res) => {
   try {
-    await dbRun("DELETE FROM transactions");
+    await dbRun("DELETE FROM transactions WHERE user_id = ?", [req.userId]);
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Failed To Clear Data" });
   }
 });
 
-app.post("/api/import-excel", upload.single("file"), async (req, res) => {
+app.post("/api/import-excel", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "No File Uploaded" });
     return;
@@ -1120,37 +1464,36 @@ app.post("/api/import-excel", upload.single("file"), async (req, res) => {
       return;
     }
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (const row of rows) {
+        const tx = toTransaction(row, mapping);
+        if (!tx) {
+          skippedCount += 1;
+          continue;
+        }
 
-    for (const row of rows) {
-      const tx = toTransaction(row, mapping);
-      if (!tx) {
-        skippedCount += 1;
-        continue;
+        const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName, req.userId) : null;
+
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, user_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, req.userId, tx.category, tx.type, tx.amount, tx.createdAt]
+        );
+
+        importedCount += 1;
       }
-
-      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
-
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [tx.id, tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, tx.createdAt]
-      );
-
-      importedCount += 1;
-    }
-
-    await dbRun("COMMIT");
+    });
     res.json({ importedCount, skippedCount });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Import Excel File" });
   } finally {
     fs.unlink(req.file.path, () => {});
   }
 });
 
-app.post("/api/import-preview", upload.single("file"), async (req, res) => {
+app.post("/api/import-preview", requireAuth, upload.single("file"), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "No File Uploaded" });
     return;
@@ -1180,7 +1523,7 @@ app.post("/api/import-preview", upload.single("file"), async (req, res) => {
       return;
     }
 
-    const existingDuplicateKeys = await getExistingDuplicateKeys();
+    const existingDuplicateKeys = await getExistingDuplicateKeys(req.userId);
     const preview = buildImportPreview(rows, mapping, existingDuplicateKeys);
     const token = crypto.randomUUID();
 
@@ -1189,7 +1532,8 @@ app.post("/api/import-preview", upload.single("file"), async (req, res) => {
       createdAt: Date.now(),
       rows,
       headers,
-      fileName: req.file.originalname || ""
+      fileName: req.file.originalname || "",
+      userId: req.userId
     });
 
     res.json({
@@ -1213,7 +1557,7 @@ app.post("/api/import-preview", upload.single("file"), async (req, res) => {
   }
 });
 
-app.post("/api/import-commit", async (req, res) => {
+app.post("/api/import-commit", requireAuth, async (req, res) => {
   const token = String(req.body?.token || "").trim();
   if (!token) {
     res.status(400).json({ error: "Missing Import Token" });
@@ -1222,7 +1566,7 @@ app.post("/api/import-commit", async (req, res) => {
 
   purgeExpiredImportPreviews();
   const cachedPreview = importPreviewCache.get(token);
-  if (!cachedPreview) {
+  if (!cachedPreview || cachedPreview.userId !== req.userId) {
     res.status(410).json({ error: "Import Preview Expired. Please Upload Again." });
     return;
   }
@@ -1237,7 +1581,7 @@ app.post("/api/import-commit", async (req, res) => {
   const rowEdits = req.body?.rowEdits && typeof req.body.rowEdits === "object" ? req.body.rowEdits : {};
 
   try {
-    const existingDuplicateKeys = skipDuplicates ? await getExistingDuplicateKeys() : new Set();
+    const existingDuplicateKeys = skipDuplicates ? await getExistingDuplicateKeys(req.userId) : new Set();
     const preview = buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys, rowEdits);
     const batchDuplicateKeys = new Set();
 
@@ -1245,31 +1589,31 @@ app.post("/api/import-commit", async (req, res) => {
     let skippedCount = preview.invalidCount;
     let skippedDuplicateCount = 0;
 
-    await dbRun("BEGIN TRANSACTION");
+    await withTransaction(async (client) => {
+      for (const tx of preview.validTransactions) {
+        const duplicateKey = buildDuplicateKey(tx);
+        if (skipDuplicates && (existingDuplicateKeys.has(duplicateKey) || batchDuplicateKeys.has(duplicateKey))) {
+          skippedCount += 1;
+          skippedDuplicateCount += 1;
+          continue;
+        }
 
-    for (const tx of preview.validTransactions) {
-      const duplicateKey = buildDuplicateKey(tx);
-      if (skipDuplicates && (existingDuplicateKeys.has(duplicateKey) || batchDuplicateKeys.has(duplicateKey))) {
-        skippedCount += 1;
-        skippedDuplicateCount += 1;
-        continue;
+        const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName, req.userId) : null;
+        const createdAt = Date.now() + importedCount;
+
+        await client.query(
+          toPgSql(
+            `INSERT INTO transactions (id, date, description, parent_category, trip_id, user_id, category, type, amount, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ),
+          [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, req.userId, tx.category, tx.type, tx.amount, createdAt]
+        );
+
+        importedCount += 1;
+        batchDuplicateKeys.add(duplicateKey);
+        existingDuplicateKeys.add(duplicateKey);
       }
-
-      const cleanTripId = tx.tripName ? await findOrCreateTripByName(tx.tripName) : "";
-      const createdAt = Date.now() + importedCount;
-
-      await dbRun(
-        `INSERT INTO transactions (id, date, description, parent_category, trip_id, category, type, amount, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [crypto.randomUUID(), tx.date, tx.description, tx.parentCategory, cleanTripId, tx.category, tx.type, tx.amount, createdAt]
-      );
-
-      importedCount += 1;
-      batchDuplicateKeys.add(duplicateKey);
-      existingDuplicateKeys.add(duplicateKey);
-    }
-
-    await dbRun("COMMIT");
+    });
     importPreviewCache.delete(token);
 
     res.json({
@@ -1279,17 +1623,18 @@ app.post("/api/import-commit", async (req, res) => {
       invalidCount: preview.invalidCount
     });
   } catch {
-    await dbRun("ROLLBACK").catch(() => {});
     res.status(500).json({ error: "Failed To Commit Import" });
   }
 });
 
-app.get("/api/export-excel", async (req, res) => {
+app.get("/api/export-excel", requireAuth, async (req, res) => {
   try {
     const transactions = await dbAll(
-      `SELECT date, description, COALESCE(parent_category, '') AS parentCategory, category, type, amount
+      `SELECT date, description, COALESCE(parent_category, '') AS "parentCategory", category, type, amount
        FROM transactions
-       ORDER BY date ASC, parent_category ASC, type DESC`
+       WHERE user_id = ?
+       ORDER BY date ASC, parent_category ASC, type DESC`,
+      [req.userId]
     );
     if (!transactions.length) {
       res.status(400).json({ error: "No Transactions To Export" });
@@ -1490,14 +1835,16 @@ app.get("/api/export-excel", async (req, res) => {
   }
 });
 
-app.get("/api/export-backup-csv", async (req, res) => {
+app.get("/api/export-backup-csv", requireAuth, async (req, res) => {
   try {
     const rows = await dbAll(
-      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS parentCategory, COALESCE(t.trip_id, '') AS tripId,
+      `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS "parentCategory", COALESCE(t.trip_id::text, '') AS "tripId",
               t.category, t.type, t.amount, COALESCE(tr.name, '') AS tripName
        FROM transactions t
        LEFT JOIN trips tr ON tr.id = t.trip_id
-       ORDER BY t.date ASC, t.created_at ASC`
+       WHERE t.user_id = ?
+       ORDER BY t.date ASC, t.created_at ASC`,
+      [req.userId]
     );
 
     const headers = ["Date", "Description", "Amount", "Type", "Parent Category", "Category", "Trip"];
@@ -1548,6 +1895,13 @@ app.get(/.*/, (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Budget Dashboard Running On http://localhost:${PORT}`);
-});
+ensureDatabase()
+  .then(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Budget Dashboard Running On http://localhost:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error("Database Initialization Failed", error);
+    process.exit(1);
+  });
