@@ -543,12 +543,11 @@ async function ensureDatabase() {
 
   // Trip names are now unique per user rather than globally.
   await pool.query("ALTER TABLE trips DROP CONSTRAINT IF EXISTS trips_name_key");
-  try {
+  const existingConstraint = await dbGet(
+    "SELECT 1 AS found FROM pg_constraint WHERE conname = 'trips_user_id_name_key'"
+  );
+  if (!existingConstraint) {
     await pool.query("ALTER TABLE trips ADD CONSTRAINT trips_user_id_name_key UNIQUE (user_id, name)");
-  } catch (error) {
-    if (error.code !== "42710") {
-      throw error;
-    }
   }
 
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE");
