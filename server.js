@@ -417,7 +417,7 @@ async function getSessionUser(token) {
   }
 
   const row = await dbGet(
-    `SELECT s.user_id AS "userId", s.expires_at AS "expiresAt", u.display_name AS "displayName"
+    `SELECT s.user_id AS "userId", s.expires_at AS "expiresAt", u.display_name AS "displayName", u.is_admin AS "isAdmin"
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token = ?`,
@@ -428,7 +428,7 @@ async function getSessionUser(token) {
     return null;
   }
 
-  return { userId: row.userId, displayName: row.displayName };
+  return { userId: row.userId, displayName: row.displayName, isAdmin: Boolean(row.isAdmin) };
 }
 
 async function destroySession(token) {
@@ -448,6 +448,15 @@ async function requireAuth(req, res, next) {
 
   req.userId = session.userId;
   req.displayName = session.displayName;
+  req.isAdmin = session.isAdmin;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.isAdmin) {
+    res.status(403).json({ error: "Admin Access Required" });
+    return;
+  }
   next();
 }
 
@@ -483,6 +492,7 @@ async function ensureDatabase() {
       display_name TEXT NOT NULL,
       pin_hash TEXT NOT NULL,
       pin_salt TEXT NOT NULL,
+      is_admin BOOLEAN NOT NULL DEFAULT FALSE,
       created_at BIGINT NOT NULL
     )
   `);
@@ -541,16 +551,24 @@ async function ensureDatabase() {
     }
   }
 
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE");
+
   const userCount = await dbGet("SELECT COUNT(*)::int AS count FROM users");
   if (!userCount || Number(userCount.count) === 0) {
     const { hash, salt } = hashPin(DEFAULT_OWNER_PIN);
     const defaultUserId = crypto.randomUUID();
     await dbRun(
-      "INSERT INTO users (id, display_name, pin_hash, pin_salt, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, created_at) VALUES (?, ?, ?, ?, TRUE, ?)",
       [defaultUserId, DEFAULT_OWNER_NAME, hash, salt, Date.now()]
     );
     await pool.query("UPDATE trips SET user_id = $1 WHERE user_id IS NULL", [defaultUserId]);
     await pool.query("UPDATE transactions SET user_id = $1 WHERE user_id IS NULL", [defaultUserId]);
+  }
+
+  const adminCount = await dbGet("SELECT COUNT(*)::int AS count FROM users WHERE is_admin = TRUE");
+  if (!adminCount || Number(adminCount.count) === 0) {
+    // No admin exists yet (e.g. users table predates is_admin) - promote the original account.
+    await pool.query("UPDATE users SET is_admin = TRUE WHERE id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)");
   }
 
   await pool.query("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
@@ -1015,13 +1033,58 @@ app.get("/api/me", async (req, res) => {
     res.status(401).json({ error: "Not Authenticated" });
     return;
   }
-  res.json({ displayName: session.displayName });
+  res.json({ displayName: session.displayName, isAdmin: session.isAdmin });
+});
+
+app.post("/api/me/pin", requireAuth, async (req, res) => {
+  const currentPin = String(req.body?.currentPin || "").trim();
+  const newPin = String(req.body?.newPin || "").trim();
+
+  if (!/^\d{4}$/.test(newPin)) {
+    res.status(400).json({ error: "New PIN Must Be 4 Digits" });
+    return;
+  }
+
+  try {
+    const user = await dbGet(
+      "SELECT pin_hash AS \"pinHash\", pin_salt AS \"pinSalt\" FROM users WHERE id = ?",
+      [req.userId]
+    );
+
+    if (!user || !verifyPin(currentPin, user.pinHash, user.pinSalt)) {
+      res.status(401).json({ error: "Current PIN Is Incorrect" });
+      return;
+    }
+
+    const { hash, salt } = hashPin(newPin);
+    await dbRun("UPDATE users SET pin_hash = ?, pin_salt = ? WHERE id = ?", [hash, salt, req.userId]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed To Update PIN" });
+  }
+});
+
+app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await dbAll(
+      `SELECT id, display_name AS "displayName", is_admin AS "isAdmin", created_at AS "createdAt"
+       FROM users
+       ORDER BY created_at ASC`
+    );
+    res.json(users);
+  } catch {
+    res.status(500).json({ error: "Failed To Load Users" });
+  }
 });
 
 app.post("/api/users", async (req, res) => {
+  const cookies = parseCookies(req);
+  const session = await getSessionUser(cookies[SESSION_COOKIE_NAME]);
   const requiredKey = String(process.env.ADMIN_SETUP_KEY || "");
   const setupKey = String(req.body?.setupKey || "");
-  if (!requiredKey || setupKey !== requiredKey) {
+  const isAuthorized = (session && session.isAdmin) || (requiredKey && setupKey === requiredKey);
+
+  if (!isAuthorized) {
     res.status(403).json({ error: "Not Authorized To Create Users" });
     return;
   }
@@ -1037,10 +1100,10 @@ app.post("/api/users", async (req, res) => {
     const { hash, salt } = hashPin(pin);
     const id = crypto.randomUUID();
     await dbRun(
-      "INSERT INTO users (id, display_name, pin_hash, pin_salt, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, created_at) VALUES (?, ?, ?, ?, FALSE, ?)",
       [id, displayName, hash, salt, Date.now()]
     );
-    res.status(201).json({ id, displayName });
+    res.status(201).json({ id, displayName, isAdmin: false, createdAt: Date.now() });
   } catch {
     res.status(500).json({ error: "Failed To Create User" });
   }

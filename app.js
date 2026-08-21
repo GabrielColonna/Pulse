@@ -115,6 +115,10 @@ const state = {
   transactions: [],
   trips: [],
   editingId: null,
+  currentUser: {
+    displayName: "",
+    isAdmin: false
+  },
   monthOffset: 0,
   monthLogDeleteMode: false,
   monthLogSelectedIds: new Set(),
@@ -175,6 +179,22 @@ const els = {
   closeQuickAddButton: document.getElementById("closeQuickAddButton"),
   workspaceTools: document.querySelector(".workspace-tools"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
+  userProfileModal: document.getElementById("userProfileModal"),
+  closeUserProfileButton: document.getElementById("closeUserProfileButton"),
+  userProfileDisplayName: document.getElementById("userProfileDisplayName"),
+  userProfileCurrentPin: document.getElementById("userProfileCurrentPin"),
+  userProfileNewPin: document.getElementById("userProfileNewPin"),
+  userProfileConfirmPin: document.getElementById("userProfileConfirmPin"),
+  saveUserProfilePinButton: document.getElementById("saveUserProfilePinButton"),
+  userProfileMessage: document.getElementById("userProfileMessage"),
+  openUserManagementButton: document.getElementById("openUserManagementButton"),
+  userManagementModal: document.getElementById("userManagementModal"),
+  closeUserManagementButton: document.getElementById("closeUserManagementButton"),
+  userManagementBody: document.getElementById("userManagementBody"),
+  newUserDisplayName: document.getElementById("newUserDisplayName"),
+  newUserPin: document.getElementById("newUserPin"),
+  createUserButton: document.getElementById("createUserButton"),
+  userManagementMessage: document.getElementById("userManagementMessage"),
   openSettingsButton: document.getElementById("openSettingsButton"),
   settingsModal: document.getElementById("settingsModal"),
   closeSettingsButton: document.getElementById("closeSettingsButton"),
@@ -582,6 +602,7 @@ async function initializeDashboard() {
   if (els.recurrenceAccordion) {
     els.recurrenceAccordion.open = false;
   }
+  await refreshCurrentUser();
   await refreshTrips();
   logTransactionLoad("Trips loaded for dashboard", { trips: state.trips.length });
   wireEvents();
@@ -612,6 +633,21 @@ function wireEvents() {
   }
   if (els.openUserProfileButton) {
     els.openUserProfileButton.addEventListener("click", onOpenUserProfile);
+  }
+  if (els.closeUserProfileButton) {
+    els.closeUserProfileButton.addEventListener("click", closeUserProfileModal);
+  }
+  if (els.saveUserProfilePinButton) {
+    els.saveUserProfilePinButton.addEventListener("click", onSaveUserProfilePin);
+  }
+  if (els.openUserManagementButton) {
+    els.openUserManagementButton.addEventListener("click", openUserManagementModal);
+  }
+  if (els.closeUserManagementButton) {
+    els.closeUserManagementButton.addEventListener("click", closeUserManagementModal);
+  }
+  if (els.createUserButton) {
+    els.createUserButton.addEventListener("click", onCreateUser);
   }
   if (els.openSettingsButton) {
     els.openSettingsButton.addEventListener("click", onOpenSettings);
@@ -918,7 +954,211 @@ function toggleSidebarCollapsed() {
 }
 
 function onOpenUserProfile() {
-  setImportMessage("User Profile Is Coming Soon. This Slot Is Ready For Auth/Profile Integration.", false);
+  openUserProfileModal();
+}
+
+function openUserProfileModal() {
+  if (!els.userProfileModal) {
+    return;
+  }
+
+  if (els.userProfileDisplayName) {
+    els.userProfileDisplayName.textContent = state.currentUser.displayName || "-";
+  }
+  if (els.userProfileCurrentPin) {
+    els.userProfileCurrentPin.value = "";
+  }
+  if (els.userProfileNewPin) {
+    els.userProfileNewPin.value = "";
+  }
+  if (els.userProfileConfirmPin) {
+    els.userProfileConfirmPin.value = "";
+  }
+  if (els.userProfileMessage) {
+    els.userProfileMessage.textContent = "";
+  }
+
+  els.userProfileModal.hidden = false;
+}
+
+function closeUserProfileModal() {
+  if (!els.userProfileModal) {
+    return;
+  }
+  els.userProfileModal.hidden = true;
+}
+
+async function onSaveUserProfilePin() {
+  const currentPin = String(els.userProfileCurrentPin?.value || "").trim();
+  const newPin = String(els.userProfileNewPin?.value || "").trim();
+  const confirmPin = String(els.userProfileConfirmPin?.value || "").trim();
+
+  if (!/^\d{4}$/.test(newPin)) {
+    setUserProfileMessage("New PIN Must Be 4 Digits.", true);
+    return;
+  }
+
+  if (newPin !== confirmPin) {
+    setUserProfileMessage("New PIN And Confirmation Do Not Match.", true);
+    return;
+  }
+
+  try {
+    const response = await apiFetch("/api/me/pin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentPin, newPin })
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Update PIN"));
+    }
+
+    setUserProfileMessage("PIN Updated Successfully.", false);
+    if (els.userProfileCurrentPin) {
+      els.userProfileCurrentPin.value = "";
+    }
+    if (els.userProfileNewPin) {
+      els.userProfileNewPin.value = "";
+    }
+    if (els.userProfileConfirmPin) {
+      els.userProfileConfirmPin.value = "";
+    }
+  } catch (error) {
+    setUserProfileMessage(error.message || "Could Not Update PIN.", true);
+  }
+}
+
+function setUserProfileMessage(message, isError) {
+  if (!els.userProfileMessage) {
+    return;
+  }
+  els.userProfileMessage.textContent = message;
+  els.userProfileMessage.style.color = isError ? "#ff4766" : "#35ff86";
+}
+
+function openUserManagementModal() {
+  if (!els.userManagementModal) {
+    return;
+  }
+
+  if (els.newUserDisplayName) {
+    els.newUserDisplayName.value = "";
+  }
+  if (els.newUserPin) {
+    els.newUserPin.value = "";
+  }
+  if (els.userManagementMessage) {
+    els.userManagementMessage.textContent = "";
+  }
+
+  els.userManagementModal.hidden = false;
+  refreshUserManagementList();
+}
+
+function closeUserManagementModal() {
+  if (!els.userManagementModal) {
+    return;
+  }
+  els.userManagementModal.hidden = true;
+}
+
+async function refreshUserManagementList() {
+  if (!els.userManagementBody) {
+    return;
+  }
+
+  els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">Loading...</td></tr>';
+
+  try {
+    const response = await apiFetch("/api/users");
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Load Users"));
+    }
+
+    const users = await response.json();
+    if (!Array.isArray(users) || !users.length) {
+      els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">No Users Found.</td></tr>';
+      return;
+    }
+
+    els.userManagementBody.innerHTML = users
+      .map((user) => `
+        <tr>
+          <td>${escapeHtml(user.displayName)}</td>
+          <td>${user.isAdmin ? "Admin" : "Member"}</td>
+          <td>${formatDateForDisplay(new Date(Number(user.createdAt)).toISOString().slice(0, 10))}</td>
+        </tr>
+      `)
+      .join("");
+  } catch (error) {
+    els.userManagementBody.innerHTML = `<tr><td colspan="3" class="empty-state">${escapeHtml(error.message || "Could Not Load Users.")}</td></tr>`;
+  }
+}
+
+async function onCreateUser() {
+  const displayName = String(els.newUserDisplayName?.value || "").trim();
+  const pin = String(els.newUserPin?.value || "").trim();
+
+  if (!displayName) {
+    setUserManagementMessage("Display Name Is Required.", true);
+    return;
+  }
+
+  if (!/^\d{4}$/.test(pin)) {
+    setUserManagementMessage("PIN Must Be 4 Digits.", true);
+    return;
+  }
+
+  try {
+    const response = await apiFetch("/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName, pin })
+    });
+
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Create User"));
+    }
+
+    setUserManagementMessage(`User Created: ${displayName}`, false);
+    if (els.newUserDisplayName) {
+      els.newUserDisplayName.value = "";
+    }
+    if (els.newUserPin) {
+      els.newUserPin.value = "";
+    }
+    refreshUserManagementList();
+  } catch (error) {
+    setUserManagementMessage(error.message || "Could Not Create User.", true);
+  }
+}
+
+function setUserManagementMessage(message, isError) {
+  if (!els.userManagementMessage) {
+    return;
+  }
+  els.userManagementMessage.textContent = message;
+  els.userManagementMessage.style.color = isError ? "#ff4766" : "#35ff86";
+}
+
+async function refreshCurrentUser() {
+  try {
+    const response = await apiFetch("/api/me");
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    state.currentUser.displayName = data.displayName || "";
+    state.currentUser.isAdmin = Boolean(data.isAdmin);
+  } catch {
+    // Leave currentUser at its defaults if this fails; UI simply won't show admin-only controls.
+  }
+
+  if (els.openUserManagementButton) {
+    els.openUserManagementButton.hidden = !state.currentUser.isAdmin;
+  }
 }
 
 function onOpenSettings() {
@@ -1791,6 +2031,16 @@ function onModalBackdropClick(event) {
 
   if (event.target === els.savingsModal) {
     closeSavingsModal();
+    return;
+  }
+
+  if (event.target === els.userProfileModal) {
+    closeUserProfileModal();
+    return;
+  }
+
+  if (event.target === els.userManagementModal) {
+    closeUserManagementModal();
   }
 }
 
