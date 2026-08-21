@@ -3799,10 +3799,10 @@ function renderTripSummary() {
       <tr>
         <td>${formatDateForDisplay(tx.date)}</td>
         <td>${escapeHtml(tx.description)}</td>
+        <td>${formatMoney(amount)}</td>
         <td>${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
         <td>${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
         <td>${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
-        <td>${formatMoney(amount)}</td>
       </tr>
     `;
     })

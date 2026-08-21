@@ -363,6 +363,20 @@ body {
   text-align: left;
 }
 
+.nav-dropdown .ghost-btn::before,
+.nav-dropdown .danger-btn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(216, 197, 255, 0.7);
+  box-shadow: 0 0 10px rgba(180, 0, 255, 0.36);
+}
+
+.nav-dropdown .danger-btn::before {
+  background: rgba(255, 116, 145, 0.88);
+}
+
 .topbar-message {
   margin-bottom: 6px;
 }
@@ -973,6 +987,18 @@ select {
   gap: 8px;
 }
 
+#monthLogModal .modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  margin: -14px -14px 8px;
+  padding: 14px;
+  background: rgba(19, 17, 39, 0.98);
+  border-bottom: 1px solid rgba(187, 167, 219, 0.22);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 .modal-header-actions {
   display: inline-flex;
   gap: 8px;
@@ -1058,6 +1084,10 @@ select {
 .log-action-buttons {
   display: flex;
   gap: 6px;
+}
+
+.log-action-buttons .delete-btn {
+  margin-left: 4px;
 }
 
 .month-log-select-col,
@@ -1257,6 +1287,10 @@ select {
   display: grid;
   grid-template-columns: repeat(3, minmax(160px, 1fr));
   gap: 8px;
+}
+
+.user-create-grid {
+  margin-top: 18px;
 }
 
 .savings-summary-grid {
@@ -1731,11 +1765,12 @@ select:focus {
 
   .app-shell.mobile-nav-open .topbar-nav {
     display: grid;
-    padding: 8px;
+    padding: 10px;
     border-radius: 16px;
     background: rgba(20, 18, 36, 0.92);
     border: 1px solid var(--line);
     box-shadow: var(--shadow);
+    gap: 8px;
   }
 
   .topbar-nav > * {
@@ -1749,29 +1784,57 @@ select:focus {
     border-radius: 14px;
     background: rgba(29, 23, 54, 0.96);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    text-align: left;
+    justify-content: space-between;
   }
 
   .app-shell.mobile-nav-open .nav-menu {
+    display: grid;
+    gap: 0;
     padding: 0;
-    border-radius: 14px;
-    background: transparent;
+    border: 1px solid rgba(187, 167, 219, 0.22);
+    border-radius: 16px;
+    background: rgba(18, 15, 34, 0.66);
+    overflow: hidden;
   }
 
   .app-shell.mobile-nav-open .nav-menu.nav-open {
-    background: rgba(29, 23, 54, 0.45);
-    border-radius: 14px;
+    background: rgba(29, 23, 54, 0.9);
+    border-color: rgba(196, 77, 255, 0.42);
+  }
+
+  .app-shell.mobile-nav-open .nav-menu > .nav-trigger::after {
+    content: "+";
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .app-shell.mobile-nav-open .nav-menu.nav-open > .nav-trigger::after {
+    content: "-";
   }
 
   .app-shell.mobile-nav-open .nav-dropdown {
-    padding: 6px 0 0;
-    margin-top: 8px;
+    padding: 8px;
+    margin: 0;
+    border: 0;
+    border-top: 1px solid rgba(187, 167, 219, 0.2);
+    border-radius: 0;
+    background: rgba(10, 8, 22, 0.36);
+    box-shadow: none;
+    gap: 8px;
   }
 
   .app-shell.mobile-nav-open .nav-dropdown .ghost-btn,
   .app-shell.mobile-nav-open .nav-dropdown .danger-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
     border: 1px solid rgba(187, 167, 219, 0.28);
     background: rgba(18, 15, 34, 0.98);
     border-radius: 12px;
+    padding: 11px 12px;
+    text-align: left;
   }
 
   .app-shell.mobile-nav-open .nav-menu.nav-danger > .nav-trigger,
@@ -2025,6 +2088,63 @@ select:focus {
     min-height: 100dvh;
     border-radius: 0;
     padding: 14px 12px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  #monthLogModal .modal-header {
+    flex-direction: row;
+    align-items: center;
+    margin: -14px -12px 8px;
+    padding: 12px 12px 10px;
+  }
+
+  #monthLogModal .modal-header h3 {
+    font-size: 1.05rem;
+    min-width: 0;
+  }
+
+  #monthLogModal .modal-header-actions {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  #monthLogDeleteModeButton {
+    order: 2;
+    min-height: 32px;
+    width: auto;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    opacity: 0.72;
+  }
+
+  #closeMonthLogButton {
+    order: 1;
+  }
+
+  #monthLogModal .log-action-buttons {
+    justify-content: flex-start;
+    align-items: center;
+    gap: 10px;
+  }
+
+  #monthLogModal .log-action-buttons .delete-btn {
+    min-height: 30px;
+    width: auto;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    opacity: 0.76;
+  }
+
+  #monthLogDeleteSelectedButton {
+    min-height: 36px;
+    width: auto;
+    justify-self: start;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.74rem;
   }
 
   .modal-table-wrap {
