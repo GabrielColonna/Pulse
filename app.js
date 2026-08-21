@@ -72,7 +72,6 @@ let CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
 const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
-const PRIVACY_PIN = "0307";
 const PRIVACY_GATE_ENABLED = true;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
 const DEBUG_TRANSACTION_LOAD = true;
@@ -109,7 +108,7 @@ function buildApiUrl(pathname) {
 }
 
 function apiFetch(pathname, options) {
-  return fetch(buildApiUrl(pathname), options);
+  return fetch(buildApiUrl(pathname), { credentials: "include", ...options });
 }
 
 const state = {
@@ -425,7 +424,7 @@ function onPrivacyPinDigitInput(event) {
   }
 
   const enteredPin = getEnteredPrivacyPin();
-  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+  if (enteredPin.length === 4) {
     onPrivacyUnlockAttempt();
   }
 }
@@ -442,7 +441,7 @@ function onPrivacyPinDigitPaste(event) {
   setPrivacyPinDigitsFrom(index, pastedText);
 
   const enteredPin = getEnteredPrivacyPin();
-  if (enteredPin.length === 4 && enteredPin === PRIVACY_PIN) {
+  if (enteredPin.length === 4) {
     onPrivacyUnlockAttempt();
   }
 }
@@ -504,23 +503,42 @@ async function onPrivacyUnlockAttempt() {
   }
 
   const inputPin = getEnteredPrivacyPin();
-  if (inputPin !== PRIVACY_PIN) {
-    if (els.privacyError) {
-      els.privacyError.textContent = "Incorrect PIN. Try Again.";
-      els.privacyError.style.color = "#ff4766";
-    }
-    clearPrivacyPinEntry();
+  if (inputPin.length !== 4) {
     return;
   }
 
   isPrivacyUnlocking = true;
+  els.privacyUnlockButton.disabled = true;
+
+  let response;
+  try {
+    response = await apiFetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: inputPin })
+    });
+  } catch {
+    response = null;
+  }
+
+  if (!response || !response.ok) {
+    if (els.privacyError) {
+      els.privacyError.textContent = response && response.status === 429
+        ? "Too Many Attempts. Try Again Later."
+        : "Incorrect PIN. Try Again.";
+      els.privacyError.style.color = "#ff4766";
+    }
+    clearPrivacyPinEntry();
+    els.privacyUnlockButton.disabled = false;
+    isPrivacyUnlocking = false;
+    return;
+  }
 
   if (els.privacyError) {
     els.privacyError.textContent = "Access Granted.";
     els.privacyError.style.color = "#86ffb8";
   }
 
-  els.privacyUnlockButton.disabled = true;
   if (els.privacyPinInput) {
     els.privacyPinInput.disabled = true;
   }
