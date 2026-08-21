@@ -987,18 +987,6 @@ select {
   gap: 8px;
 }
 
-#monthLogModal .modal-header {
-  position: sticky;
-  top: 0;
-  z-index: 12;
-  margin: -14px -14px 8px;
-  padding: 14px;
-  background: rgba(19, 17, 39, 0.98);
-  border-bottom: 1px solid rgba(187, 167, 219, 0.22);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
 .modal-header-actions {
   display: inline-flex;
   gap: 8px;
@@ -1084,10 +1072,6 @@ select {
 .log-action-buttons {
   display: flex;
   gap: 6px;
-}
-
-.log-action-buttons .delete-btn {
-  margin-left: 4px;
 }
 
 .month-log-select-col,
@@ -1803,17 +1787,6 @@ select:focus {
     border-color: rgba(196, 77, 255, 0.42);
   }
 
-  .app-shell.mobile-nav-open .nav-menu > .nav-trigger::after {
-    content: "+";
-    color: var(--text-muted);
-    font-size: 1rem;
-    line-height: 1;
-  }
-
-  .app-shell.mobile-nav-open .nav-menu.nav-open > .nav-trigger::after {
-    content: "-";
-  }
-
   .app-shell.mobile-nav-open .nav-dropdown {
     padding: 8px;
     margin: 0;
@@ -2090,63 +2063,6 @@ select:focus {
     padding: 14px 12px calc(18px + env(safe-area-inset-bottom));
   }
 
-  #monthLogModal .modal-header {
-    flex-direction: row;
-    align-items: center;
-    margin: -14px -12px 8px;
-    padding: 12px 12px 10px;
-  }
-
-  #monthLogModal .modal-header h3 {
-    font-size: 1.05rem;
-    min-width: 0;
-  }
-
-  #monthLogModal .modal-header-actions {
-    flex: 0 0 auto;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-  }
-
-  #monthLogDeleteModeButton {
-    order: 2;
-    min-height: 32px;
-    width: auto;
-    padding: 5px 9px;
-    border-radius: 999px;
-    font-size: 0.7rem;
-    opacity: 0.72;
-  }
-
-  #closeMonthLogButton {
-    order: 1;
-  }
-
-  #monthLogModal .log-action-buttons {
-    justify-content: flex-start;
-    align-items: center;
-    gap: 10px;
-  }
-
-  #monthLogModal .log-action-buttons .delete-btn {
-    min-height: 30px;
-    width: auto;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 0.68rem;
-    opacity: 0.76;
-  }
-
-  #monthLogDeleteSelectedButton {
-    min-height: 36px;
-    width: auto;
-    justify-self: start;
-    padding: 6px 10px;
-    border-radius: 999px;
-    font-size: 0.74rem;
-  }
-
   .modal-table-wrap {
     margin-top: 10px;
     overflow-x: auto;
@@ -2174,14 +2090,81 @@ select:focus {
 
   .settings-editor-grid {
     grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .settings-modal-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .settings-modal-card .modal-header {
+    position: sticky;
+    top: -14px;
+    z-index: 12;
+    margin: -14px -12px 0;
+    padding: 12px;
+    background: rgba(19, 17, 39, 0.98);
+    border-bottom: 1px solid rgba(187, 167, 219, 0.22);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .settings-modal-card .modal-subtitle {
+    margin: 0;
+  }
+
+  .settings-editor-panel {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .settings-control-row {
+    gap: 10px;
+    margin-bottom: 14px;
   }
 
   .settings-control-row-dual {
     grid-template-columns: 1fr;
   }
 
+  .settings-inline-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .settings-inline-actions .ghost-btn,
+  .settings-inline-actions .danger-btn {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+
   .settings-keyword-input-row {
     grid-template-columns: 1fr;
+  }
+
+  .settings-keywords-list {
+    min-height: 54px;
+    max-height: 148px;
+    overflow: auto;
+  }
+
+  .settings-model-table {
+    min-width: 560px;
+  }
+
+  .settings-modal-card > .form-actions {
+    position: sticky;
+    bottom: calc(-18px - env(safe-area-inset-bottom));
+    z-index: 10;
+    margin: 0 -12px calc(-18px - env(safe-area-inset-bottom));
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+    background: rgba(19, 17, 39, 0.98);
+    border-top: 1px solid rgba(187, 167, 219, 0.22);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
 
   .kpi-grid {
