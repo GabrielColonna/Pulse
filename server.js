@@ -347,7 +347,7 @@ async function ensureDatabase() {
       date TEXT NOT NULL,
       description TEXT NOT NULL,
       parent_category TEXT,
-      trip_id UUID REFERENCES trips(id) ON DELETE SET NULL,
+      trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL,
       category TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
       amount REAL NOT NULL,
@@ -356,7 +356,7 @@ async function ensureDatabase() {
   `);
 
   await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS parent_category TEXT");
-  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS trip_id UUID");
+  await pool.query("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS trip_id TEXT");
   await pool.query("ALTER TABLE trips ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT FALSE");
 
   await pool.query("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
@@ -779,7 +779,7 @@ app.get("/api/trips", async (req, res) => {
       `SELECT id, name, COALESCE(start_date, '') AS "startDate", COALESCE(end_date, '') AS "endDate", archived, created_at AS "createdAt"
        FROM trips
       WHERE archived = FALSE
-       ORDER BY name COLLATE NOCASE ASC`
+       ORDER BY LOWER(name) ASC`
     );
 
     res.json(rows);
