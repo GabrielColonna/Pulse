@@ -9,9 +9,10 @@
   "description": "Pulse budget dashboard",
   "icons": [
     {
-      "src": "assets/pulse-logo-2.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "assets/official-pulse-logo.svg",
+      "sizes": "1024x1024",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

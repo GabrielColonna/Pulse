@@ -182,6 +182,7 @@ const els = {
   privacyUnlockButton: document.getElementById("privacyUnlockButton"),
   privacyError: document.getElementById("privacyError"),
   appShell: document.querySelector(".app-shell"),
+  currentUserGreeting: document.getElementById("currentUserGreeting"),
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
   mobileNavToggleButton: document.getElementById("mobileNavToggleButton"),
   openQuickAddButton: document.getElementById("openQuickAddButton"),
@@ -334,11 +335,40 @@ const els = {
 };
 
 async function init() {
-  if (!initializePrivacyGate()) {
+  let response;
+  try {
+    response = await apiFetch("/api/me");
+  } catch {
+    window.location.replace("/login.html");
+    return;
+  }
+  if (!response.ok) {
+    window.location.replace("/login.html");
     return;
   }
 
+  const dashboardLoadingStartedAt = performance.now();
+  if (els.loadingScreen) {
+    els.loadingScreen.hidden = false;
+  }
+
   await initializeDashboard();
+
+  const minimumLoadingDuration = 1100;
+  const loadingElapsed = performance.now() - dashboardLoadingStartedAt;
+  if (loadingElapsed < minimumLoadingDuration) {
+    await waitFor(minimumLoadingDuration - loadingElapsed);
+  }
+
+  if (els.loadingScreen) {
+    els.loadingScreen.classList.add("dashboard-wave-scatter");
+    els.loadingScreen.classList.add("dashboard-loading-done");
+    await waitFor(900);
+    els.loadingScreen.hidden = true;
+  }
+  if (els.appShell) {
+    els.appShell.hidden = false;
+  }
 }
 
 function initializePrivacyGate() {
@@ -1248,6 +1278,10 @@ async function refreshCurrentUser() {
     const data = await response.json();
     state.currentUser.displayName = data.displayName || "";
     state.currentUser.isAdmin = Boolean(data.isAdmin);
+    if (els.currentUserGreeting) {
+      const firstName = state.currentUser.displayName.trim().split(/\s+/)[0] || "";
+      els.currentUserGreeting.textContent = firstName ? `Welcome back, ${firstName}` : "";
+    }
   } catch {
     // Leave currentUser at its defaults if this fails; UI simply won't show admin-only controls.
   }

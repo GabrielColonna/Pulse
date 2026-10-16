@@ -56,6 +56,12 @@ app.use((req, res, next) => {
 
   next();
 });
+app.get(["/", "/login"], (req, res) => {
+  res.sendFile(path.join(__dirname, "login.html"));
+});
+app.get("/dashboard", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
 app.use(express.static(__dirname));
 
 const categoryModel = {

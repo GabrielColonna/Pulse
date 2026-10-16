@@ -11,35 +11,28 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="icon" type="image/png" href="assets/pulse-logo-2.png" />
-  <link rel="apple-touch-icon" href="assets/pulse-logo-2.png" />
+  <link rel="icon" type="image/svg+xml" href="assets/official-pulse-logo.svg" />
+  <link rel="apple-touch-icon" href="assets/official-pulse-logo.svg" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="bg-orb orb-1" aria-hidden="true"></div>
   <div class="bg-orb orb-2" aria-hidden="true"></div>
-  <div id="privacyGate" class="privacy-gate">
-    <section class="privacy-card" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
-      <h1 id="privacyTitle">Pulse</h1>
-      <p>Enter PIN To Open Your Dashboard.</p>
-      <label class="privacy-field" for="privacyPinDigit1">
-        PIN
-        <div class="privacy-pin-grid" role="group" aria-label="4 Digit PIN">
-          <input id="privacyPinDigit1" class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="0" />
-          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="1" />
-          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="2" />
-          <input class="privacy-pin-digit" type="password" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" data-pin-index="3" />
-        </div>
-      </label>
-      <button id="privacyUnlockButton" class="primary-btn" type="button">Unlock</button>
-      <p id="privacyError" class="form-message" aria-live="polite"></p>
-    </section>
-  </div>
-
-  <div id="loadingScreen" class="loading-screen" hidden aria-live="polite" aria-label="Loading dashboard">
-    <div class="loading-ring"></div>
-    <p class="loading-label">Loading Pulse…</p>
+  <div id="loadingScreen" class="dashboard-loading-screen" aria-live="polite" aria-label="Connecting to your Pulse dashboard">
+    <div class="dashboard-loading-grid" aria-hidden="true"></div>
+    <div class="dashboard-loading-visual dashboard-wave-visual" aria-hidden="true">
+      <div class="dashboard-wave-line">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+    </div>
+    <p class="dashboard-loading-kicker">Pulse</p>
+    <p class="dashboard-loading-label">
+      <span>Finding your rhythm</span>
+      <span>Syncing your signals</span>
+      <span>Almost in focus</span>
+    </p>
+    <div class="dashboard-loading-progress" aria-hidden="true"><span></span></div>
   </div>
 
   <div class="app-shell" hidden>
@@ -47,7 +40,7 @@
       <div class="topbar-brand">
         <!-- <p class="eyebrow">Budget System</p> -->
         <div class="brand-title-row">
-          <img src="assets/pulse-logo-2.png" class="brand-logo" alt="Pulse Logo" />
+          <img src="assets/official-pulse-logo.svg" class="brand-logo" alt="Pulse Personal Finance" />
           <h1>Pulse</h1>
         </div>
         <!-- <p class="sync-note">Your transactions are saved locally and load automatically each time you open Pulse.</p> -->
@@ -67,8 +60,14 @@
         </button>
 
         <div class="nav-menu">
-          <button class="ghost-btn nav-trigger" type="button">User</button>
+          <button class="ghost-btn nav-trigger user-nav-trigger" type="button" aria-label="Open user menu" title="User menu">
+            <svg class="user-nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="8" r="3.2"></circle>
+              <path d="M5.5 19.2c.8-3.1 3.1-4.8 6.5-4.8s5.7 1.7 6.5 4.8"></path>
+            </svg>
+          </button>
           <div class="nav-dropdown">
+            <div id="currentUserGreeting" class="current-user-greeting" aria-live="polite">Welcome back</div>
             <button id="openUserProfileButton" class="ghost-btn" type="button">User Profile</button>
             <button id="openUserManagementButton" class="ghost-btn" type="button" hidden>User Management</button>
             <button id="openSettingsButton" class="ghost-btn" type="button">Settings</button>
