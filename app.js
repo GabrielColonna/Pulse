@@ -183,6 +183,7 @@ const els = {
   privacyError: document.getElementById("privacyError"),
   appShell: document.querySelector(".app-shell"),
   currentUserGreeting: document.getElementById("currentUserGreeting"),
+  logoutButton: document.getElementById("logoutButton"),
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
   mobileNavToggleButton: document.getElementById("mobileNavToggleButton"),
   openQuickAddButton: document.getElementById("openQuickAddButton"),
@@ -331,7 +332,8 @@ const els = {
   backupButton: document.getElementById("backupButton"),
   excelFile: document.getElementById("excelFile"),
   importButton: document.getElementById("importButton"),
-  importMessage: document.getElementById("importMessage")
+  importMessage: document.getElementById("importMessage"),
+  monthlySummarySection: document.getElementById("monthlySummarySection")
 };
 
 async function init() {
@@ -369,6 +371,7 @@ async function init() {
   if (els.appShell) {
     els.appShell.hidden = false;
   }
+  setMobileDashboardStartPosition();
 }
 
 function initializePrivacyGate() {
@@ -621,6 +624,24 @@ async function onPrivacyUnlockAttempt() {
     els.loadingScreen.hidden = true;
   }
   els.appShell.hidden = false;
+  setMobileDashboardStartPosition();
+}
+
+function setMobileDashboardStartPosition() {
+  if (!isMobileAppView() || !els.monthlySummarySection) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    const topbar = document.querySelector(".topbar");
+    const topbarHeight = topbar ? topbar.getBoundingClientRect().height : 0;
+    const targetTop = els.monthlySummarySection.getBoundingClientRect().top + window.scrollY;
+    window.scrollTo({
+      top: Math.max(0, targetTop - topbarHeight - 8),
+      left: 0,
+      behavior: "auto"
+    });
+  });
 }
 
 async function initializeDashboard() {
@@ -684,8 +705,30 @@ function wireEvents() {
   if (els.openUserProfileButton) {
     els.openUserProfileButton.addEventListener("click", onOpenUserProfile);
   }
+  if (els.logoutButton) {
+    els.logoutButton.addEventListener("click", onLogout);
+  }
   if (els.closeUserProfileButton) {
     els.closeUserProfileButton.addEventListener("click", closeUserProfileModal);
+  }
+
+  async function onLogout() {
+    if (els.logoutButton) {
+      els.logoutButton.disabled = true;
+    }
+
+    try {
+      const response = await apiFetch("/api/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Logout failed");
+      }
+      window.location.replace("/login.html");
+    } catch (error) {
+      if (els.logoutButton) {
+        els.logoutButton.disabled = false;
+      }
+      setImportMessage(error.message || "Unable to log out. Try again.", true);
+    }
   }
   if (els.saveUserProfilePinButton) {
     els.saveUserProfilePinButton.addEventListener("click", onSaveUserProfilePin);
@@ -3344,24 +3387,41 @@ function renderParentCategoryChart(monthTransactions) {
             const label = point.label || "Category";
             const total = Number(point.raw || 0);
             const parentColor = getParentCategoryChartColor(label, point.dataIndex || 0);
+            const isMobile = isMobileAppView();
 
-            const breakdown = Object.entries(subTotals[label] || {})
-              .sort((a, b) => b[1] - a[1])
-              .map(([name, amount], index) => {
-                const percent = total > 0 ? Math.round((amount / total) * 100) : 0;
-                const color = getSubcategoryTooltipColor(index);
-                return `<li><span class="hover-menu-dot" style="background:${color}"></span><span class="hover-menu-label">${escapeHtml(name)}</span><span class="hover-menu-value">${formatMoney(amount)} (${percent}%)</span></li>`;
-              })
-              .join("");
+            if (isMobile) {
+              tooltipEl.innerHTML = `<div class="hover-menu-title">${escapeHtml(label)}</div><div class="hover-menu-total"><span class="hover-menu-dot" style="background:${parentColor}"></span><span class="hover-menu-label">Total Spent</span><span class="hover-menu-value">${formatMoney(total)}</span></div>`;
+              tooltipEl.classList.add("chart-hover-menu-mobile");
+            } else {
+              const breakdown = Object.entries(subTotals[label] || {})
+                .sort((a, b) => b[1] - a[1])
+                .map(([name, amount], index) => {
+                  const percent = total > 0 ? Math.round((amount / total) * 100) : 0;
+                  const color = getSubcategoryTooltipColor(index);
+                  return `<li><span class="hover-menu-dot" style="background:${color}"></span><span class="hover-menu-label">${escapeHtml(name)}</span><span class="hover-menu-value">${formatMoney(amount)} (${percent}%)</span></li>`;
+                })
+                .join("");
 
-            tooltipEl.innerHTML = `<div class="hover-menu-title">${escapeHtml(label)}</div><div class="hover-menu-total"><span class="hover-menu-dot" style="background:${parentColor}"></span><span class="hover-menu-label">Total</span><span class="hover-menu-value">${formatMoney(total)}</span></div><div class="hover-menu-subtitle">Subcategories</div><ul class="hover-menu-list">${breakdown || '<li><span class="hover-menu-label">No Subcategory Data</span></li>'}</ul>`;
+              tooltipEl.classList.remove("chart-hover-menu-mobile");
+              tooltipEl.innerHTML = `<div class="hover-menu-title">${escapeHtml(label)}</div><div class="hover-menu-total"><span class="hover-menu-dot" style="background:${parentColor}"></span><span class="hover-menu-label">Total</span><span class="hover-menu-value">${formatMoney(total)}</span></div><div class="hover-menu-subtitle">Subcategories</div><ul class="hover-menu-list">${breakdown || '<li><span class="hover-menu-label">No Subcategory Data</span></li>'}</ul>`;
+            }
 
             const rect = chart.canvas.getBoundingClientRect();
             tooltipEl.style.opacity = "1";
-            tooltipEl.style.left = `${window.pageXOffset + rect.left + tooltip.caretX + 14}px`;
-            tooltipEl.style.top = `${window.pageYOffset + rect.top + tooltip.caretY - 12}px`;
-            tooltipEl.style.transform = "translateY(-50%)";
-            tooltipEl.style.position = "absolute";
+            if (isMobile) {
+              const menuWidth = Math.min(190, window.innerWidth - 24);
+              const left = Math.max(12, Math.min(window.innerWidth - menuWidth - 12, rect.left + tooltip.caretX - menuWidth / 2));
+              const top = Math.max(12, Math.min(window.innerHeight - 76, rect.top + tooltip.caretY - 52));
+              tooltipEl.style.left = `${left}px`;
+              tooltipEl.style.top = `${top}px`;
+              tooltipEl.style.transform = "none";
+              tooltipEl.style.position = "fixed";
+            } else {
+              tooltipEl.style.left = `${window.pageXOffset + rect.left + tooltip.caretX + 14}px`;
+              tooltipEl.style.top = `${window.pageYOffset + rect.top + tooltip.caretY - 12}px`;
+              tooltipEl.style.transform = "translateY(-50%)";
+              tooltipEl.style.position = "absolute";
+            }
             tooltipEl.style.pointerEvents = "none";
             tooltipEl.style.zIndex = "50";
           }
@@ -3427,20 +3487,21 @@ function renderRecentEntries() {
       const normalizedSubcategory = normalizeLegacyCategoryLabel(tx.category);
       const tripName = getTripNameById(tx.tripId) || "Unknown";
       return `
-      <li class="recent-item">
+      <li class="recent-item ${tx.type === "income" ? "recent-item-income" : "recent-item-expense"}">
         <div class="recent-chips">
-          <span class="type-chip ${tx.type === "income" ? "type-income" : "type-expense"}">${escapeHtml(toTitleCase(tx.type))}</span>
-          ${tx.type === "income" ? "" : `<span class="category-chip ${getParentCategoryChipClass(normalizedParent)}">${escapeHtml(normalizedParent || "Uncategorized")}</span>`}
+          ${tx.type === "income"
+            ? (tx.category ? `<span class="category-chip parent-chip-default">${escapeHtml(normalizedSubcategory)}</span>` : "")
+            : `<span class="category-chip ${getParentCategoryChipClass(normalizedParent)}">${escapeHtml(normalizedParent || "Uncategorized")}</span>`}
         </div>
         <div class="recent-main">
           <strong>${escapeHtml(tx.description)}</strong>
           <div class="recent-meta">
             <span class="recent-date">${formatDateForDisplay(tx.date)} -</span>
-            ${tx.category ? `<span class="recent-subcategory">${escapeHtml(normalizedSubcategory)}</span>` : ""}
+            ${tx.type !== "income" && tx.category ? `<span class="recent-subcategory">${escapeHtml(normalizedSubcategory)}</span>` : ""}
           </div>
         </div>
-        ${tx.tripId ? `<span class="category-chip parent-chip-default recent-amount-trip">Trip: ${escapeHtml(tripName)}</span>` : ""}
         <span class="recent-amount">${tx.type === "income" ? "+" : "-"}${formatMoney(Number(tx.amount))}</span>
+        ${tx.tripId ? `<span class="category-chip parent-chip-default recent-amount-trip" title="${escapeHtml(tripName)}" aria-label="Trip: ${escapeHtml(tripName)}"><span class="recent-trip-icon" aria-hidden="true">✈</span><span class="recent-trip-name">${escapeHtml(tripName)}</span></span>` : ""}
         <div class="item-actions">
           <button class="mini-btn edit-btn" data-action="edit" data-id="${escapeHtml(tx.id)}" type="button">Edit</button>
           <button class="mini-btn delete-btn" data-action="delete" data-id="${escapeHtml(tx.id)}" type="button">Delete</button>
@@ -3810,11 +3871,11 @@ function renderManageTrips() {
       const usageCount = tripUsage.get(trip.id) || 0;
       const tripTotal = tripTotals.get(trip.id) || 0;
       return `
-      <tr>
-        <td>${escapeHtml(trip.name)}</td>
-        <td>${formatMoney(tripTotal)}</td>
-        <td>${usageCount}</td>
-        <td>
+      <tr class="trip-management-row">
+        <td data-label="Trip">${escapeHtml(trip.name)}</td>
+        <td data-label="Total">${formatMoney(tripTotal)}</td>
+        <td data-label="Linked Entries">${usageCount}</td>
+        <td data-label="Actions">
           <div class="item-actions">
             <button class="mini-btn edit-btn" type="button" data-action="edit-trip" data-id="${escapeHtml(trip.id)}">Edit</button>
             <button class="mini-btn delete-btn" type="button" data-action="delete-trip" data-id="${escapeHtml(trip.id)}">Delete</button>
@@ -3955,13 +4016,13 @@ function renderTripSummary() {
       }
 
       return `
-      <tr>
-        <td>${formatDateForDisplay(tx.date)}</td>
-        <td>${escapeHtml(tx.description)}</td>
-        <td>${formatMoney(amount)}</td>
-        <td>${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
-        <td>${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
-        <td>${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
+      <tr class="trip-summary-row">
+        <td data-label="Date">${formatDateForDisplay(tx.date)}</td>
+        <td data-label="Description">${escapeHtml(tx.description)}</td>
+        <td data-label="Amount">${formatMoney(amount)}</td>
+        <td data-label="Category">${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
+        <td data-label="Subcategory">${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
+        <td data-label="Trip">${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
       </tr>
     `;
     })

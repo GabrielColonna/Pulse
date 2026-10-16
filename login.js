@@ -3,6 +3,7 @@
   const button = document.getElementById("loginButton");
   const message = document.getElementById("loginMessage");
   const digits = Array.from(document.querySelectorAll(".login-pin-digit"));
+  let isSubmitting = false;
 
   function pin() {
     return digits.map((digit) => digit.value).join("");
@@ -18,6 +19,8 @@
       digit.value = digit.value.replace(/\D/g, "").slice(-1);
       if (digit.value && index < digits.length - 1) {
         digits[index + 1].focus();
+      } else if (digit.value && index === digits.length - 1) {
+        form.requestSubmit();
       }
     });
     digit.addEventListener("keydown", (event) => {
@@ -39,17 +42,24 @@
         if (digits[pastedIndex]) digits[pastedIndex].value = value;
       });
       digits[Math.min(pasted.length, digits.length) - 1].focus();
+      if (pasted.length === digits.length) {
+        form.requestSubmit();
+      }
     });
   });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (isSubmitting) {
+      return;
+    }
     if (pin().length !== 4) {
       showMessage("Enter all four digits to continue.", true);
       digits.find((digit) => !digit.value)?.focus();
       return;
     }
 
+    isSubmitting = true;
     button.disabled = true;
     button.classList.add("is-loading");
     showMessage("Verifying your secure session…", false);
@@ -72,6 +82,7 @@
     } catch {
       showMessage("Unable to connect. Check your connection and try again.", true);
     } finally {
+      isSubmitting = false;
       button.disabled = false;
       button.classList.remove("is-loading");
     }
