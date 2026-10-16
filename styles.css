@@ -597,6 +597,14 @@ select {
   gap: 18px;
 }
 
+.layout-grid > *,
+.dashboard-panel,
+.workspace-tools,
+.panel-card,
+.widget-card {
+  min-width: 0;
+}
+
 .workspace-tools {
   margin-top: 49px;
   display: grid;
@@ -1056,6 +1064,10 @@ select {
   text-align: left;
   padding: 8px;
   border-bottom: 1px solid #292246;
+}
+
+.global-search-table td:last-child {
+  white-space: nowrap;
 }
 
 .modal-table th {
@@ -1652,6 +1664,13 @@ select:focus {
 }
 
 @media (max-width: 640px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     background:
       radial-gradient(circle at 20% 0%, rgba(180, 0, 255, 0.26) 0%, transparent 34%),
@@ -1680,8 +1699,18 @@ select:focus {
 
   .app-shell {
     width: 100%;
+    max-width: 100%;
     margin: 0;
     padding: 0 0 18px;
+  }
+
+  .layout-grid,
+  .dashboard-panel,
+  .workspace-tools,
+  .panel-row,
+  .chart-grid {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .topbar {
@@ -2071,6 +2100,62 @@ select:focus {
 
   .modal-table {
     min-width: 680px;
+  }
+
+  .global-search-table {
+    min-width: 0;
+  }
+
+  .global-search-table thead {
+    display: none;
+  }
+
+  .global-search-table,
+  .global-search-table tbody,
+  .global-search-table tr,
+  .global-search-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .global-search-table tr {
+    padding: 10px;
+    border-bottom: 1px solid #322955;
+  }
+
+  .global-search-table td {
+    display: grid;
+    grid-template-columns: minmax(92px, 34%) 1fr;
+    gap: 8px;
+    padding: 6px 0;
+    border: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .global-search-table td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .global-search-table td.empty-state {
+    display: block;
+    text-align: center;
+  }
+
+  .global-search-table td.empty-state::before {
+    display: none;
+  }
+
+  .global-search-table .log-action-cell {
+    display: block;
+    padding-top: 10px;
+  }
+
+  .global-search-table .log-action-cell .mini-btn {
+    width: 100%;
+    min-height: 42px;
   }
 
   .form-actions .primary-btn,

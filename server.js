@@ -1265,17 +1265,21 @@ app.get("/api/transactions/search", requireAuth, async (req, res) => {
 
   try {
     const rows = await dbAll(
-      `SELECT id, date, description, COALESCE(parent_category, '') AS "parentCategory", COALESCE(trip_id::text, '') AS "tripId", category, type, amount, created_at AS "createdAt"
-       FROM transactions
-       WHERE user_id = ?
-         AND (lower(description) LIKE ?
-          OR lower(COALESCE(parent_category, '')) LIKE ?
-          OR lower(COALESCE(category, '')) LIKE ?
-          OR lower(type) LIKE ?
-          OR lower(date) LIKE ?)
-       ORDER BY date DESC, created_at DESC
-       LIMIT 250`,
-      [req.userId, likeQuery, likeQuery, likeQuery, likeQuery, likeQuery]
+      `SELECT t.id, t.date, t.description, COALESCE(t.parent_category, '') AS "parentCategory",
+              COALESCE(t.trip_id::text, '') AS "tripId", COALESCE(tr.name, '') AS "tripName",
+              t.category, t.type, t.amount, t.created_at AS "createdAt"
+       FROM transactions t
+       LEFT JOIN trips tr ON tr.id = t.trip_id AND tr.user_id = t.user_id
+       WHERE t.user_id = ?
+         AND (lower(t.description) LIKE ?
+          OR lower(COALESCE(t.parent_category, '')) LIKE ?
+          OR lower(COALESCE(t.category, '')) LIKE ?
+          OR lower(t.type) LIKE ?
+          OR lower(t.date) LIKE ?
+          OR lower(COALESCE(tr.name, '')) LIKE ?
+          OR CAST(t.amount AS TEXT) LIKE ?)
+       ORDER BY t.date DESC, t.created_at DESC`,
+      [req.userId, likeQuery, likeQuery, likeQuery, likeQuery, likeQuery, likeQuery, likeQuery]
     );
 
     res.json(rows);

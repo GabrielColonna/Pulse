@@ -800,6 +800,9 @@ function wireEvents() {
   if (els.runGlobalSearchButton) {
     els.runGlobalSearchButton.addEventListener("click", runGlobalSearch);
   }
+  if (els.globalSearchBody) {
+    els.globalSearchBody.addEventListener("click", onGlobalSearchAction);
+  }
   els.resetMonthLogFilters.addEventListener("click", resetMonthLogFilters);
   els.monthLogBody.addEventListener("click", onMonthLogAction);
   els.monthLogBody.addEventListener("change", onMonthLogSelectionChanged);
@@ -3515,13 +3518,28 @@ function closeGlobalSearchModal() {
 function onGlobalSearchInputKeydown(event) {
   if (event.key !== "Enter") {
     return;
-  if (els.globalSearchSortFilter) {
-    els.globalSearchSortFilter.value = state.globalSearch.sortBy;
-  }
   }
 
   event.preventDefault();
   runGlobalSearch();
+}
+
+function onGlobalSearchAction(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.dataset.action !== "edit") {
+    return;
+  }
+
+  const transaction = state.globalSearch.results.find((tx) => tx.id === button.dataset.id)
+    || state.transactions.find((tx) => tx.id === button.dataset.id);
+  if (!transaction) {
+    setImportMessage("That Transaction Is No Longer Available. Search Again.", true);
+    return;
+  }
+
+  closeGlobalSearchModal();
+  enterEditMode(transaction);
+  focusQuickAddWidget();
 }
 
 async function runGlobalSearch() {
@@ -3568,14 +3586,14 @@ function renderGlobalSearchResults() {
 
   if (!state.globalSearch.hasSearched) {
     els.globalSearchSubtitle.textContent = "Search Across All Months";
-    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
 
   if (state.globalSearch.isSearching) {
     els.globalSearchSubtitle.textContent = `Searching For "${state.globalSearch.query}"...`;
-    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Searching...</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">Searching...</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
@@ -3584,7 +3602,7 @@ function renderGlobalSearchResults() {
 
   if (!ordered.length) {
     els.globalSearchSubtitle.textContent = `No Results Found For "${state.globalSearch.query}"`;
-    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">No Matching Transactions Found Across The Database.</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">No Matching Transactions Found Across The Database.</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
@@ -3603,13 +3621,16 @@ function renderGlobalSearchResults() {
 
       return `
       <tr>
-        <td>${formatDateForDisplay(tx.date)}</td>
-        <td>${escapeHtml(tx.description)}</td>
-        <td>${escapeHtml(toTitleCase(tx.type))}</td>
-        <td>${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
-        <td>${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
-        <td>${escapeHtml(getTripNameById(tx.tripId) || "-")}</td>
-        <td>${formatMoney(amount)}</td>
+        <td data-label="Date">${formatDateForDisplay(tx.date)}</td>
+        <td data-label="Description">${escapeHtml(tx.description)}</td>
+        <td data-label="Type">${escapeHtml(toTitleCase(tx.type))}</td>
+        <td data-label="Category">${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
+        <td data-label="Subcategory">${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
+        <td data-label="Trip">${escapeHtml(tx.tripName || getTripNameById(tx.tripId) || "-")}</td>
+        <td data-label="Amount">${formatMoney(amount)}</td>
+        <td data-label="Actions" class="log-action-cell">
+          <button class="mini-btn edit-btn" data-action="edit" data-id="${escapeHtml(tx.id)}" type="button">Edit</button>
+        </td>
       </tr>
     `;
     })
