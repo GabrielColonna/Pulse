@@ -283,6 +283,7 @@
 
             <div class="form-actions">
               <button id="submitButton" class="primary-btn" type="submit">Add Entry</button>
+              <button id="addAndNewButton" class="primary-btn mobile-only-btn" type="button">Add &amp; New</button>
               <button id="cancelEditButton" class="ghost-btn" type="button" hidden>Cancel Edit</button>
             </div>
             <p id="formMessage" class="form-message" role="status" aria-live="polite"></p>
@@ -384,7 +385,7 @@
         </label>
       </div>
       <div class="modal-table-wrap">
-        <table class="modal-table global-search-table">
+        <table class="modal-table">
           <thead>
             <tr>
               <th>Date</th>
@@ -432,7 +433,7 @@
       </div>
 
       <div class="modal-table-wrap">
-        <table class="modal-table">
+        <table class="modal-table global-search-table">
           <thead>
             <tr>
               <th>Date</th>
@@ -440,14 +441,13 @@
               <th>Type</th>
               <th>Category</th>
               <th>Subcategory</th>
-              <th>Trip</th>
               <th>Amount</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="globalSearchBody">
             <tr>
-              <td colspan="8" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td>
+              <td colspan="7" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td>
             </tr>
           </tbody>
         </table>

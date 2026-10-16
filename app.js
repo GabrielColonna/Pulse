@@ -156,6 +156,7 @@ let appDialogResolver = null;
 let appDialogMode = "confirm";
 let hasInitializedDashboard = false;
 let isPrivacyUnlocking = false;
+let keepQuickAddOpenAfterSubmit = false;
 const settingsState = {
   type: "expense",
   parentName: "",
@@ -164,6 +165,14 @@ const settingsState = {
 };
 
 const mobileNavMediaQuery = window.matchMedia("(max-width: 640px)");
+const focusableOverlaySelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
 
 const els = {
   privacyGate: document.getElementById("privacyGate"),
@@ -231,6 +240,7 @@ const els = {
   openTripSummaryButton: document.getElementById("openTripSummaryButton"),
   openManageTripsButton: document.getElementById("openManageTripsButton"),
   submitButton: document.getElementById("submitButton"),
+  addAndNewButton: document.getElementById("addAndNewButton"),
   cancelEditButton: document.getElementById("cancelEditButton"),
   formMessage: document.getElementById("formMessage"),
   balanceValue: document.getElementById("balanceValue"),
@@ -616,6 +626,16 @@ async function initializeDashboard() {
 }
 
 function wireEvents() {
+  document.addEventListener("keydown", keepFocusInsideMobileOverlay);
+  document.addEventListener("focusin", keepFocusInsideMobileOverlayOnFocus);
+  const overlayObserver = new MutationObserver(updateMobileOverlayState);
+  overlayObserver.observe(document.body, {
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["hidden"]
+  });
+  updateMobileOverlayState();
+
   if (els.sidebarToggleButton) {
     els.sidebarToggleButton.addEventListener("click", toggleSidebarCollapsed);
   }
@@ -719,6 +739,16 @@ function wireEvents() {
   els.recurrenceFrequency.addEventListener("change", onRecurrenceFrequencyChanged);
   els.createTripButton.addEventListener("click", onCreateTrip);
   els.form.addEventListener("submit", onSubmitEntry);
+  if (els.addAndNewButton) {
+    els.addAndNewButton.addEventListener("click", () => {
+      if (state.editingId) {
+        return;
+      }
+
+      keepQuickAddOpenAfterSubmit = true;
+      els.form.requestSubmit();
+    });
+  }
   els.cancelEditButton.addEventListener("click", exitEditMode);
   els.clearButton.addEventListener("click", clearAllData);
   els.exportButton.addEventListener("click", exportToCsv);
@@ -876,6 +906,7 @@ function setQuickAddOpen(isOpen) {
   }
 
   els.appShell.classList.toggle("quick-add-open", isOpen);
+  updateMobileOverlayState();
 }
 
 function openQuickAddModal() {
@@ -896,6 +927,68 @@ function closeQuickAddModal() {
   }
 
   setQuickAddOpen(false);
+}
+
+function getOpenMobileOverlay() {
+  if (!isMobileAppView()) {
+    return null;
+  }
+
+  if (els.appShell?.classList.contains("quick-add-open")) {
+    return els.workspaceTools;
+  }
+
+  const openModals = Array.from(document.querySelectorAll(".modal-backdrop:not([hidden])"));
+  return openModals[openModals.length - 1] || null;
+}
+
+function updateMobileOverlayState() {
+  const overlay = getOpenMobileOverlay();
+  document.body.classList.toggle("mobile-overlay-open", Boolean(overlay));
+  if (overlay && !overlay.contains(document.activeElement)) {
+    overlay.querySelector(focusableOverlaySelector)?.focus();
+  }
+}
+
+function keepFocusInsideMobileOverlayOnFocus(event) {
+  const overlay = getOpenMobileOverlay();
+  if (overlay && !overlay.contains(event.target)) {
+    overlay.querySelector(focusableOverlaySelector)?.focus();
+  }
+}
+
+function keepFocusInsideMobileOverlay(event) {
+  const overlay = getOpenMobileOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  if (!overlay.contains(document.activeElement)) {
+    event.preventDefault();
+    overlay.querySelector(focusableOverlaySelector)?.focus();
+    return;
+  }
+
+  if (event.key !== "Tab") {
+    return;
+  }
+
+  const focusableElements = Array.from(overlay.querySelectorAll(focusableOverlaySelector));
+  if (!focusableElements.length) {
+    event.preventDefault();
+    overlay.focus();
+    return;
+  }
+
+  const firstFocusable = focusableElements[0];
+  const lastFocusable = focusableElements[focusableElements.length - 1];
+  if (event.shiftKey && document.activeElement === firstFocusable) {
+    event.preventDefault();
+    lastFocusable.focus();
+  } else if (!event.shiftKey && document.activeElement === lastFocusable) {
+    event.preventDefault();
+    firstFocusable.focus();
+  }
 }
 
 function resetMobileDashboardView() {
@@ -2380,10 +2473,16 @@ async function onSubmitEntry(event) {
         setMessage("Transaction Saved.", false);
       }
 
+      const shouldReopenQuickAdd = keepQuickAddOpenAfterSubmit;
+      keepQuickAddOpenAfterSubmit = false;
       resetForm();
       if (isMobileAppView()) {
-        closeQuickAddModal();
-        resetMobileDashboardView();
+        if (shouldReopenQuickAdd) {
+          openQuickAddModal();
+        } else {
+          closeQuickAddModal();
+          resetMobileDashboardView();
+        }
       }
     }
 
@@ -2412,6 +2511,9 @@ function enterEditMode(transaction) {
   els.recurrenceFrequency.value = "none";
   els.recurrenceCount.value = "1";
   els.recurrenceCount.disabled = true;
+  if (els.addAndNewButton) {
+    els.addAndNewButton.hidden = true;
+  }
   els.submitButton.textContent = "Update Transaction";
   els.cancelEditButton.hidden = false;
   setMessage("Editing Selected Transaction.", false);
@@ -2442,6 +2544,9 @@ function resetForm() {
   els.recurrenceFrequency.value = "none";
   els.recurrenceCount.value = "1";
   els.recurrenceCount.disabled = true;
+  if (els.addAndNewButton) {
+    els.addAndNewButton.hidden = false;
+  }
   if (els.recurrenceAccordion) {
     els.recurrenceAccordion.open = false;
   }
@@ -3586,14 +3691,14 @@ function renderGlobalSearchResults() {
 
   if (!state.globalSearch.hasSearched) {
     els.globalSearchSubtitle.textContent = "Search Across All Months";
-    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Search For A Keyword To Find Transactions Across All Months.</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
 
   if (state.globalSearch.isSearching) {
     els.globalSearchSubtitle.textContent = `Searching For "${state.globalSearch.query}"...`;
-    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">Searching...</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">Searching...</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
@@ -3602,7 +3707,7 @@ function renderGlobalSearchResults() {
 
   if (!ordered.length) {
     els.globalSearchSubtitle.textContent = `No Results Found For "${state.globalSearch.query}"`;
-    els.globalSearchBody.innerHTML = '<tr><td colspan="8" class="empty-state">No Matching Transactions Found Across The Database.</td></tr>';
+    els.globalSearchBody.innerHTML = '<tr><td colspan="7" class="empty-state">No Matching Transactions Found Across The Database.</td></tr>';
     els.globalSearchTotals.innerHTML = '<p>Matches: <strong>0</strong></p><p>Total Income: <strong>$0.00</strong></p><p>Total Spending: <strong>$0.00</strong></p>';
     return;
   }
@@ -3626,7 +3731,6 @@ function renderGlobalSearchResults() {
         <td data-label="Type">${escapeHtml(toTitleCase(tx.type))}</td>
         <td data-label="Category">${escapeHtml(normalizeLegacyParentCategory(tx.parentCategory))}</td>
         <td data-label="Subcategory">${escapeHtml(normalizeLegacyCategoryLabel(tx.category))}</td>
-        <td data-label="Trip">${escapeHtml(tx.tripName || getTripNameById(tx.tripId) || "-")}</td>
         <td data-label="Amount">${formatMoney(amount)}</td>
         <td data-label="Actions" class="log-action-cell">
           <button class="mini-btn edit-btn" data-action="edit" data-id="${escapeHtml(tx.id)}" type="button">Edit</button>
