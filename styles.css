@@ -1196,6 +1196,7 @@ select {
 .ghost-btn,
 .danger-btn,
 .primary-btn,
+.add-and-new-btn,
 .mini-btn {
   border: 1px solid transparent;
   border-radius: 12px;
@@ -2235,7 +2236,8 @@ select:focus {
 }
 
 .form-actions .primary-btn,
-.form-actions .ghost-btn {
+.form-actions .ghost-btn,
+.form-actions .add-and-new-btn {
   flex: 1;
 }
 
