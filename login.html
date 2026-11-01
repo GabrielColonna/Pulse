@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0b0916" />
-  <meta name="description" content="Sign in to your Pulse budget dashboard." />
-  <title>Sign In | Pulse</title>
+  <meta name="description" content="Sign in to the private Pulse beta." />
+  <title>Private Beta | Pulse</title>
   <link rel="icon" type="image/svg+xml" href="assets/official-pulse-logo.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -19,17 +19,21 @@
         <span>Pulse</span>
       </a>
       <div class="login-intro-copy">
-        <p class="login-eyebrow">Personal finance, in rhythm</p>
-        <h1 id="loginIntroTitle">A clearer view of your money starts here.</h1>
-        <p class="login-description">Bring your spending, savings, and goals into one calm, focused workspace.</p>
+        <p class="login-eyebrow">Private beta · By invitation</p>
+        <h1 id="loginIntroTitle">You’re in the room early.</h1>
+        <p class="login-description">Pulse is being shaped with a small group of thoughtful testers. Your invitation gives you an early look at a calmer way to understand your money.</p>
+        <div class="login-proof">
+          <span class="login-proof-dot" aria-hidden="true"></span>
+          <span>Access reserved for invited testers</span>
+        </div>
       </div>
     </section>
 
     <section class="login-card" aria-labelledby="loginTitle">
       <div class="login-card-header">
-        <p class="login-eyebrow">Welcome back</p>
-        <h2 id="loginTitle">Sign in to Pulse</h2>
-        <p>Enter your 4-digit PIN to continue to your dashboard.</p>
+        <p class="login-eyebrow">Pulse · Founding tester access</p>
+        <h2 id="loginTitle">Welcome to the beta.</h2>
+        <p>You’re seeing this page because you were invited. Enter your 4-digit PIN to continue to your private dashboard.</p>
       </div>
       <form id="loginForm" class="login-form">
         <label class="login-pin-label" for="loginPinDigit1">Security PIN</label>
@@ -42,6 +46,7 @@
         <button id="loginButton" class="primary-btn login-submit" type="submit">Continue to dashboard <span aria-hidden="true">→</span></button>
         <p id="loginMessage" class="login-message" role="status" aria-live="polite"></p>
       </form>
+      <p class="login-footer">Private beta <span aria-hidden="true">·</span> Built with our original testers</p>
     </section>
   </main>
   <script src="login.js"></script>

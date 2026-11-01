@@ -3,6 +3,8 @@ const dns = require("dns");
 const fs = require("fs");
 const path = require("path");
 
+require("dotenv").config();
+
 const express = require("express");
 const multer = require("multer");
 const { Pool } = require("pg");
@@ -299,6 +301,56 @@ const legacyAliases = {
   "OTHER EXPENSE": { parentCategory: "Expenses", category: "Losses" }
 };
 
+function buildDefaultCategoryModel() {
+  const rulesByKey = new Map(
+    Object.values(classifyRules).flat().map((rule) => [
+      `${rule.parentCategory.toLowerCase()}|${rule.category.toLowerCase()}`,
+      rule.keywords
+    ])
+  );
+
+  return Object.fromEntries(
+    Object.entries(categoryModel).map(([type, groups]) => [
+      type,
+      groups.map((group) => ({
+        name: group.name,
+        subcategories: group.subcategories.map((name) => ({
+          name,
+          keywords: rulesByKey.get(`${group.name.toLowerCase()}|${name.toLowerCase()}`) || []
+        }))
+      }))
+    ])
+  );
+}
+
+function normalizeCategoryModel(model) {
+  const normalized = {};
+  for (const type of ["income", "expense"]) {
+    normalized[type] = Array.isArray(model?.[type])
+      ? model[type].map((group) => ({
+        name: String(group?.name || "").trim(),
+        subcategories: Array.isArray(group?.subcategories)
+          ? group.subcategories.map((subcategory) => ({
+            name: String(subcategory?.name || "").trim(),
+            keywords: Array.isArray(subcategory?.keywords)
+              ? subcategory.keywords.map((keyword) => String(keyword || "").trim().toLowerCase()).filter(Boolean)
+              : []
+          })).filter((subcategory) => subcategory.name)
+          : []
+      })).filter((group) => group.name && group.subcategories.length)
+      : [];
+  }
+  return normalized;
+}
+
+function isValidCategoryModel(model) {
+  return ["income", "expense"].every((type) => (
+    Array.isArray(model?.[type]) &&
+    model[type].length > 0 &&
+    model[type].every((group) => group.name && group.subcategories.length > 0)
+  ));
+}
+
 function toPgSql(sql) {
   let index = 0;
   return String(sql).replace(/\?/g, () => `$${++index}`);
@@ -423,7 +475,8 @@ async function getSessionUser(token) {
   }
 
   const row = await dbGet(
-    `SELECT s.user_id AS "userId", s.expires_at AS "expiresAt", u.display_name AS "displayName", u.is_admin AS "isAdmin"
+    `SELECT s.user_id AS "userId", s.expires_at AS "expiresAt", u.display_name AS "displayName",
+            u.is_admin AS "isAdmin", u.is_new AS "isNew"
      FROM sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token = ?`,
@@ -434,7 +487,12 @@ async function getSessionUser(token) {
     return null;
   }
 
-  return { userId: row.userId, displayName: row.displayName, isAdmin: Boolean(row.isAdmin) };
+  return {
+    userId: row.userId,
+    displayName: row.displayName,
+    isAdmin: Boolean(row.isAdmin),
+    isNew: Boolean(row.isNew)
+  };
 }
 
 async function destroySession(token) {
@@ -499,6 +557,7 @@ async function ensureDatabase() {
       pin_hash TEXT NOT NULL,
       pin_salt TEXT NOT NULL,
       is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+      is_new BOOLEAN NOT NULL DEFAULT FALSE,
       created_at BIGINT NOT NULL
     )
   `);
@@ -509,6 +568,14 @@ async function ensureDatabase() {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       created_at BIGINT NOT NULL,
       expires_at BIGINT NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_category_models (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      model JSONB NOT NULL,
+      updated_at BIGINT NOT NULL
     )
   `);
 
@@ -557,7 +624,7 @@ async function ensureDatabase() {
   }
 
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE");
-
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_new BOOLEAN NOT NULL DEFAULT FALSE");
   const userCount = await dbGet("SELECT COUNT(*)::int AS count FROM users");
   if (!userCount || Number(userCount.count) === 0) {
     const { hash, salt } = hashPin(DEFAULT_OWNER_PIN);
@@ -575,6 +642,16 @@ async function ensureDatabase() {
     // No admin exists yet (e.g. users table predates is_admin) - promote the original account.
     await pool.query("UPDATE users SET is_admin = TRUE WHERE id = (SELECT id FROM users ORDER BY created_at ASC LIMIT 1)");
   }
+
+  const defaultModel = JSON.stringify(normalizeCategoryModel(buildDefaultCategoryModel()));
+  await pool.query(
+    `INSERT INTO user_category_models (user_id, model, updated_at)
+     SELECT id, $1::jsonb, $2 FROM users
+     WHERE NOT EXISTS (
+       SELECT 1 FROM user_category_models existing WHERE existing.user_id = users.id
+     )`,
+    [defaultModel, Date.now()]
+  );
 
   await pool.query("UPDATE transactions SET category = 'Salary' WHERE category = 'Paycheck/Salary'");
   await pool.query("UPDATE transactions SET parent_category = 'Personal' WHERE parent_category = 'Personal Expenses'");
@@ -745,26 +822,44 @@ function shiftDateByFrequency(dateStr, frequency, occurrenceIndex) {
   return normalizeDate(dateStr);
 }
 
-function classifyCategory(description, type) {
-  const lower = String(description || "").toLowerCase();
-  const rules = classifyRules[type] || [];
+async function getUserCategoryModel(userId) {
+  const row = await dbGet("SELECT model FROM user_category_models WHERE user_id = ?", [userId]);
+  const model = normalizeCategoryModel(row?.model || {});
+  return isValidCategoryModel(model) ? model : normalizeCategoryModel(buildDefaultCategoryModel());
+}
 
-  for (const rule of rules) {
-    if (rule.keywords.some((keyword) => lower.includes(keyword))) {
-      return { parentCategory: rule.parentCategory, category: rule.category };
+function classifyCategory(description, type, model) {
+  const lower = String(description || "").toLowerCase();
+  const typesToCheck = [type === "income" ? "income" : "expense"];
+
+  for (const typeToCheck of typesToCheck) {
+    const groups = model[typeToCheck] || [];
+    for (const group of groups) {
+      for (const subcategory of group.subcategories) {
+        if (subcategory.keywords.some((keyword) => lower.includes(keyword))) {
+          return { type: typeToCheck, parentCategory: group.name, category: subcategory.name };
+        }
+      }
     }
   }
 
-  return type === "income"
-    ? { parentCategory: "Income", category: "Other Income" }
-    : { parentCategory: "Personal", category: "Other" };
+  const groups = model[type] || [];
+  const fallbackName = type === "income" ? "Other Income" : "Other";
+  const fallbackGroup = groups.find((group) => group.subcategories.some((subcategory) => subcategory.name === fallbackName)) || groups[0];
+  const fallbackSubcategory = fallbackGroup?.subcategories.find((subcategory) => subcategory.name === fallbackName) || fallbackGroup?.subcategories[0];
+  return {
+    type,
+    parentCategory: fallbackGroup?.name || (type === "income" ? "Income" : "Personal"),
+    category: fallbackSubcategory?.name || (type === "income" ? "Other Income" : "Other")
+  };
 }
 
-function normalizeCategory({ value, parentCategory, type, description }) {
+function normalizeCategory({ value, parentCategory, type, description, model }) {
   const rawCategory = String(value || "").trim();
   const rawParent = String(parentCategory || "").trim();
   const normalizedParent = rawParent.toLowerCase() === "personal expenses" ? "Personal" : rawParent;
-  const groups = categoryModel[type] || [];
+  const activeModel = model || normalizeCategoryModel(buildDefaultCategoryModel());
+  const groups = activeModel[type] || [];
 
   if (rawCategory) {
     const alias = legacyAliases[rawCategory.toUpperCase()];
@@ -773,8 +868,9 @@ function normalizeCategory({ value, parentCategory, type, description }) {
     }
 
     for (const group of groups) {
-      if (group.subcategories.some((subcategory) => subcategory.toLowerCase() === rawCategory.toLowerCase())) {
-        return { parentCategory: group.name, category: group.subcategories.find((subcategory) => subcategory.toLowerCase() === rawCategory.toLowerCase()) };
+      const subcategory = group.subcategories.find((item) => item.name.toLowerCase() === rawCategory.toLowerCase());
+      if (subcategory) {
+        return { parentCategory: group.name, category: subcategory.name };
       }
     }
   }
@@ -782,9 +878,9 @@ function normalizeCategory({ value, parentCategory, type, description }) {
   if (rawCategory && normalizedParent) {
     const parentMatch = groups.find((group) => group.name.toLowerCase() === normalizedParent.toLowerCase());
     if (parentMatch) {
-      const sub = parentMatch.subcategories.find((subcategory) => subcategory.toLowerCase() === rawCategory.toLowerCase());
+      const sub = parentMatch.subcategories.find((subcategory) => subcategory.name.toLowerCase() === rawCategory.toLowerCase());
       if (sub) {
-        return { parentCategory: parentMatch.name, category: sub };
+        return { parentCategory: parentMatch.name, category: sub.name };
       }
     }
   }
@@ -795,7 +891,7 @@ function normalizeCategory({ value, parentCategory, type, description }) {
     return { parentCategory: normalizedParent || rawParent, category: rawCategory };
   }
 
-  return classifyCategory(description, type);
+  return classifyCategory(description, type, activeModel);
 }
 
 function findHeader(headers, patterns) {
@@ -843,7 +939,7 @@ function getImportRowCell(row, headerName) {
   return row[headerName];
 }
 
-function parseImportRow(row, mapping, rowNumber, overrides = {}) {
+async function parseImportRow(row, mapping, rowNumber, overrides = {}, model) {
   const overrideDate = String(overrides.date || "").trim();
   const overrideDescription = String(overrides.description || "").trim();
   const overrideParentCategory = String(overrides.parentCategory || "").trim();
@@ -876,8 +972,10 @@ function parseImportRow(row, mapping, rowNumber, overrides = {}) {
     value: overrideCategory || getImportRowCell(row, mapping.category),
     parentCategory: overrideParentCategory || getImportRowCell(row, mapping.parentCategory),
     type,
-    description
+    description,
+    model
   });
+  const normalizedType = normalized.type || type;
 
   const tripName = overrideTripName || String(getImportRowCell(row, mapping.trip) || "").trim();
 
@@ -890,7 +988,7 @@ function parseImportRow(row, mapping, rowNumber, overrides = {}) {
       parentCategory: normalized.parentCategory,
       category: normalized.category,
       tripName,
-      type,
+      type: normalizedType,
       amount: Math.abs(amountRaw)
     }
   };
@@ -907,7 +1005,7 @@ async function getExistingDuplicateKeys(userId) {
   return new Set(rows.map((row) => buildDuplicateKey(row)));
 }
 
-function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides = {}) {
+async function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides = {}, model) {
   const validTransactions = [];
   const previewRows = [];
   const duplicateCounts = {
@@ -916,9 +1014,9 @@ function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides =
   };
   const batchDuplicateKeys = new Set();
 
-  rows.forEach((row, index) => {
+  for (const [index, row] of rows.entries()) {
     const rowNumber = index + 2;
-    const parsed = parseImportRow(row, mapping, rowNumber, rowOverrides[String(rowNumber)] || rowOverrides[rowNumber] || {});
+    const parsed = await parseImportRow(row, mapping, rowNumber, rowOverrides[String(rowNumber)] || rowOverrides[rowNumber] || {}, model);
 
     if (!parsed.ok) {
       previewRows.push({
@@ -929,7 +1027,7 @@ function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides =
         status: "invalid",
         reason: parsed.reason
       });
-      return;
+      continue;
     }
 
     const duplicateKey = buildDuplicateKey(parsed.tx);
@@ -960,7 +1058,7 @@ function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides =
       status,
       reason
     });
-  });
+  }
 
   return {
     validTransactions,
@@ -971,8 +1069,8 @@ function buildImportPreview(rows, mapping, existingDuplicateKeys, rowOverrides =
   };
 }
 
-function toTransaction(row, mapping) {
-  const parsed = parseImportRow(row, mapping, 0);
+async function toTransaction(row, mapping, model) {
+  const parsed = await parseImportRow(row, mapping, 0, {}, model);
   if (!parsed.ok) {
     return null;
   }
@@ -1038,7 +1136,40 @@ app.get("/api/me", async (req, res) => {
     res.status(401).json({ error: "Not Authenticated" });
     return;
   }
-  res.json({ displayName: session.displayName, isAdmin: session.isAdmin });
+  res.json({
+    displayName: session.displayName,
+    isAdmin: session.isAdmin,
+    needsOnboarding: session.isNew
+  });
+});
+
+app.get("/api/category-model", requireAuth, async (req, res) => {
+  try {
+    res.json(await getUserCategoryModel(req.userId));
+  } catch {
+    res.status(500).json({ error: "Failed To Load Category Model" });
+  }
+});
+
+app.put("/api/category-model", requireAuth, async (req, res) => {
+  const model = normalizeCategoryModel(req.body?.model);
+  if (!isValidCategoryModel(model)) {
+    res.status(400).json({ error: "Category Model Must Include Income And Expense Groups With Subcategories" });
+    return;
+  }
+
+  try {
+    await dbRun(
+      `INSERT INTO user_category_models (user_id, model, updated_at)
+       VALUES (?, ?::jsonb, ?)
+       ON CONFLICT (user_id) DO UPDATE SET model = EXCLUDED.model, updated_at = EXCLUDED.updated_at`,
+      [req.userId, JSON.stringify(model), Date.now()]
+    );
+    await dbRun("UPDATE users SET is_new = FALSE WHERE id = ?", [req.userId]);
+    res.json(model);
+  } catch {
+    res.status(500).json({ error: "Failed To Save Category Model" });
+  }
 });
 
 app.post("/api/me/pin", requireAuth, async (req, res) => {
@@ -1072,13 +1203,52 @@ app.post("/api/me/pin", requireAuth, async (req, res) => {
 app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
   try {
     const users = await dbAll(
-      `SELECT id, display_name AS "displayName", is_admin AS "isAdmin", created_at AS "createdAt"
+      `SELECT id, display_name AS "displayName", is_admin AS "isAdmin",
+              is_new AS "isNew", created_at AS "createdAt"
        FROM users
        ORDER BY created_at ASC`
     );
     res.json(users);
   } catch {
     res.status(500).json({ error: "Failed To Load Users" });
+  }
+});
+
+app.post("/api/users/:id/onboarding-reset", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const user = await dbGet("SELECT id FROM users WHERE id = ?", [req.params.id]);
+    if (!user) {
+      res.status(404).json({ error: "User Not Found" });
+      return;
+    }
+    await dbRun("UPDATE users SET is_new = TRUE WHERE id = ?", [req.params.id]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed To Reset Onboarding" });
+  }
+});
+
+app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  if (req.params.id === req.userId) {
+    res.status(400).json({ error: "You Cannot Delete Your Own Account" });
+    return;
+  }
+
+  try {
+    const user = await dbGet("SELECT id, is_admin AS \"isAdmin\" FROM users WHERE id = ?", [req.params.id]);
+    if (!user) {
+      res.status(404).json({ error: "User Not Found" });
+      return;
+    }
+    if (user.isAdmin) {
+      res.status(400).json({ error: "Admin Accounts Cannot Be Deleted Here" });
+      return;
+    }
+
+    await dbRun("DELETE FROM users WHERE id = ?", [req.params.id]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed To Delete User" });
   }
 });
 
@@ -1105,8 +1275,12 @@ app.post("/api/users", async (req, res) => {
     const { hash, salt } = hashPin(pin);
     const id = crypto.randomUUID();
     await dbRun(
-      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, created_at) VALUES (?, ?, ?, ?, FALSE, ?)",
+      "INSERT INTO users (id, display_name, pin_hash, pin_salt, is_admin, is_new, created_at) VALUES (?, ?, ?, ?, FALSE, TRUE, ?)",
       [id, displayName, hash, salt, Date.now()]
+    );
+    await dbRun(
+      "INSERT INTO user_category_models (user_id, model, updated_at) VALUES (?, ?::jsonb, ?)",
+      [id, JSON.stringify(normalizeCategoryModel(buildDefaultCategoryModel())), Date.now()]
     );
     res.status(201).json({ id, displayName, isAdmin: false, createdAt: Date.now() });
   } catch {
@@ -1321,9 +1495,10 @@ app.post("/api/transactions", requireAuth, async (req, res) => {
     return;
   }
 
-  const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
-
   try {
+    const model = await getUserCategoryModel(req.userId);
+    const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription, model });
+    const normalizedType = normalized.type || cleanType;
     const cleanTripId = await resolveTripId(tripId, req.userId);
 
     const entriesToCreate = cleanFrequency === "none" ? 1 : cleanRecurrenceCount;
@@ -1338,7 +1513,7 @@ app.post("/api/transactions", requireAuth, async (req, res) => {
           parentCategory: normalized.parentCategory,
           tripId: cleanTripId,
           category: normalized.category,
-          type: cleanType,
+          type: normalizedType,
           amount: cleanAmount,
           createdAt: Date.now() + i
         };
@@ -1384,16 +1559,17 @@ app.put("/api/transactions/:id", requireAuth, async (req, res) => {
     return;
   }
 
-  const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription });
-
   try {
+    const model = await getUserCategoryModel(req.userId);
+    const normalized = normalizeCategory({ value: category, parentCategory, type: cleanType, description: cleanDescription, model });
+    const normalizedType = normalized.type || cleanType;
     const cleanTripId = await resolveTripId(tripId, req.userId);
 
     const result = await dbRun(
       `UPDATE transactions
        SET date = ?, description = ?, parent_category = ?, trip_id = ?, category = ?, type = ?, amount = ?
        WHERE id = ? AND user_id = ?`,
-      [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, cleanType, cleanAmount, id, req.userId]
+      [cleanDate, cleanDescription, normalized.parentCategory, cleanTripId, normalized.category, normalizedType, cleanAmount, id, req.userId]
     );
 
     if (!result.changes) {
@@ -1474,9 +1650,10 @@ app.post("/api/import-excel", requireAuth, upload.single("file"), async (req, re
       return;
     }
 
+    const model = await getUserCategoryModel(req.userId);
     await withTransaction(async (client) => {
       for (const row of rows) {
-        const tx = toTransaction(row, mapping);
+        const tx = await toTransaction(row, mapping, model);
         if (!tx) {
           skippedCount += 1;
           continue;
@@ -1534,7 +1711,8 @@ app.post("/api/import-preview", requireAuth, upload.single("file"), async (req, 
     }
 
     const existingDuplicateKeys = await getExistingDuplicateKeys(req.userId);
-    const preview = buildImportPreview(rows, mapping, existingDuplicateKeys);
+    const model = await getUserCategoryModel(req.userId);
+    const preview = await buildImportPreview(rows, mapping, existingDuplicateKeys, {}, model);
     const token = crypto.randomUUID();
 
     purgeExpiredImportPreviews();
@@ -1592,7 +1770,8 @@ app.post("/api/import-commit", requireAuth, async (req, res) => {
 
   try {
     const existingDuplicateKeys = skipDuplicates ? await getExistingDuplicateKeys(req.userId) : new Set();
-    const preview = buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys, rowEdits);
+    const model = await getUserCategoryModel(req.userId);
+    const preview = await buildImportPreview(cachedPreview.rows, mapping, existingDuplicateKeys, rowEdits, model);
     const batchDuplicateKeys = new Set();
 
     let importedCount = 0;
@@ -1847,6 +2026,7 @@ app.get("/api/export-excel", requireAuth, async (req, res) => {
 
 app.get("/api/export-backup-csv", requireAuth, async (req, res) => {
   try {
+    const model = await getUserCategoryModel(req.userId);
     const rows = await dbAll(
       `SELECT t.date, t.description, COALESCE(t.parent_category, '') AS "parentCategory", COALESCE(t.trip_id::text, '') AS "tripId",
               t.category, t.type, t.amount, COALESCE(tr.name, '') AS tripName
@@ -1865,7 +2045,8 @@ app.get("/api/export-backup-csv", requireAuth, async (req, res) => {
         value: row.category,
         parentCategory: row.parentCategory,
         type: row.type,
-        description: row.description
+        description: row.description,
+        model
       });
 
       const line = [

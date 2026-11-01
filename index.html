@@ -35,6 +35,67 @@
     <div class="dashboard-loading-progress" aria-hidden="true"><span></span></div>
   </div>
 
+  <div id="onboardingScreen" class="onboarding-screen" hidden>
+    <div class="onboarding-screen-glow onboarding-screen-glow-one" aria-hidden="true"></div>
+    <div class="onboarding-screen-glow onboarding-screen-glow-two" aria-hidden="true"></div>
+    <header class="onboarding-screen-header">
+      <div class="brand-title-row">
+        <img src="assets/official-pulse-logo.svg" class="brand-logo" alt="Pulse Personal Finance" />
+        <h1>Pulse</h1>
+      </div>
+      <span id="onboardingScreenStep" class="onboarding-screen-step">Your setup</span>
+    </header>
+    <main class="onboarding-screen-main">
+      <section class="onboarding-welcome-panel">
+        <p class="eyebrow">Welcome to your workspace</p>
+        <h2>Let’s make Pulse yours.</h2>
+        <p class="onboarding-welcome-copy">
+          Before you see your dashboard, choose the way you think about your money. Start with our recommendations, then rename, remove, or add anything so the categories match your real life.
+        </p>
+        <div class="onboarding-welcome-points">
+          <div><strong>1</strong><span>Shape your categories</span></div>
+          <div><strong>2</strong><span>Choose your income and expenses</span></div>
+          <div><strong>3</strong><span>Start with a dashboard that fits</span></div>
+        </div>
+        <p class="onboarding-required-note">This setup is required before continuing. You can change everything later in Settings.</p>
+      </section>
+      <section class="onboarding-setup-panel" aria-labelledby="onboardingSetupTitle">
+        <div class="onboarding-setup-heading">
+          <div>
+            <p class="eyebrow">Step 1 of 1</p>
+            <h2 id="onboardingSetupTitle">Build your categories</h2>
+          </div>
+          <span id="onboardingSetupStatus" class="onboarding-setup-status">Not saved yet</span>
+        </div>
+        <p class="onboarding-setup-help">Parent categories are the big buckets. Subcategories are where individual transactions will land. Start with the essentials now; you can teach Pulse keywords later from Settings.</p>
+        <div class="onboarding-type-tabs" role="tablist" aria-label="Category type">
+          <button class="onboarding-type-tab is-active" type="button" data-onboarding-type="expense" role="tab" aria-selected="true">Expenses</button>
+          <button class="onboarding-type-tab" type="button" data-onboarding-type="income" role="tab" aria-selected="false">Income</button>
+        </div>
+        <div id="onboardingBuilder" class="onboarding-builder"></div>
+        <div class="onboarding-setup-actions">
+          <button id="addOnboardingParentButton" class="ghost-btn" type="button">+ Add Parent Category</button>
+          <button id="finishOnboardingSetupButton" class="primary-btn" type="button">Save &amp; Enter Pulse</button>
+        </div>
+        <p id="onboardingSetupMessage" class="form-message" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </div>
+
+  <div id="dashboardTour" class="dashboard-tour" hidden>
+    <div class="dashboard-tour-card">
+      <div class="dashboard-tour-card-header">
+        <p class="eyebrow">A quick look around</p>
+        <span id="dashboardTourStepLabel">1 of 4</span>
+      </div>
+      <div id="dashboardTourContent"></div>
+      <div class="dashboard-tour-actions">
+        <button id="dashboardTourSkipButton" class="ghost-btn" type="button">Skip Tour</button>
+        <button id="dashboardTourNextButton" class="primary-btn" type="button">Next</button>
+      </div>
+    </div>
+  </div>
+
   <div class="app-shell" hidden>
     <header class="topbar">
       <div class="topbar-brand">
@@ -652,6 +713,7 @@
       </div>
 
       <div class="form-actions import-preview-actions">
+        <button id="openOnboardingFromProfileButton" class="ghost-btn" type="button">Open Setup Tour</button>
         <button id="saveUserProfilePinButton" class="primary-btn" type="button">Update PIN</button>
       </div>
       <p id="userProfileMessage" class="form-message" aria-live="polite"></p>
@@ -673,6 +735,7 @@
               <th>Name</th>
               <th>Role</th>
               <th>Created</th>
+              <th class="user-management-actions-heading">Actions</th>
             </tr>
           </thead>
           <tbody id="userManagementBody"></tbody>
@@ -723,6 +786,23 @@
       <div class="form-actions import-preview-actions">
         <button id="saveSavingsGoalButton" class="primary-btn" type="button">Save Goal</button>
       </div>
+
+      <section class="savings-progress-panel" aria-live="polite">
+        <div class="savings-progress-heading">
+          <div>
+            <p class="savings-progress-kicker">Your momentum</p>
+            <h4 id="savingsProgressTitle">Set a goal to start tracking</h4>
+          </div>
+          <strong id="savingsProgressPercent">—</strong>
+        </div>
+        <div class="savings-progress-track" aria-hidden="true">
+          <div id="savingsProgressBar" class="savings-progress-bar"></div>
+        </div>
+        <div class="savings-progress-meta">
+          <span id="savingsProgressStatus">Add a target and your transactions will do the math for you.</span>
+          <span id="savingsProgressPace"></span>
+        </div>
+      </section>
 
       <div id="savingsSummaryCards" class="savings-summary-grid"></div>
 

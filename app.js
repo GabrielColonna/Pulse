@@ -71,7 +71,6 @@ let CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
 
 const CHART_COLORS = ["#b400ff", "#ff2bd6", "#35ff86", "#ff4766", "#7f5cff", "#00f0ff"];
 const SAVINGS_GOAL_STORAGE_KEY = "pulse.savingsGoal";
-const CATEGORY_MODEL_STORAGE_KEY = "pulse.categoryModel";
 const PRIVACY_GATE_ENABLED = true;
 const API_BASE = normalizeApiBase(window.__PULSE_API_BASE__ || "");
 const DEBUG_TRANSACTION_LOAD = true;
@@ -117,7 +116,8 @@ const state = {
   editingId: null,
   currentUser: {
     displayName: "",
-    isAdmin: false
+    isAdmin: false,
+    needsOnboarding: false
   },
   monthOffset: 0,
   monthLogDeleteMode: false,
@@ -197,6 +197,7 @@ const els = {
   userProfileNewPin: document.getElementById("userProfileNewPin"),
   userProfileConfirmPin: document.getElementById("userProfileConfirmPin"),
   saveUserProfilePinButton: document.getElementById("saveUserProfilePinButton"),
+  openOnboardingFromProfileButton: document.getElementById("openOnboardingFromProfileButton"),
   userProfileMessage: document.getElementById("userProfileMessage"),
   openUserManagementButton: document.getElementById("openUserManagementButton"),
   userManagementModal: document.getElementById("userManagementModal"),
@@ -224,6 +225,18 @@ const els = {
   settingsModelTableBody: document.getElementById("settingsModelTableBody"),
   saveCategoryModelButton: document.getElementById("saveCategoryModelButton"),
   resetCategoryModelButton: document.getElementById("resetCategoryModelButton"),
+  onboardingScreen: document.getElementById("onboardingScreen"),
+  onboardingScreenStep: document.getElementById("onboardingScreenStep"),
+  onboardingBuilder: document.getElementById("onboardingBuilder"),
+  onboardingSetupStatus: document.getElementById("onboardingSetupStatus"),
+  onboardingSetupMessage: document.getElementById("onboardingSetupMessage"),
+  addOnboardingParentButton: document.getElementById("addOnboardingParentButton"),
+  finishOnboardingSetupButton: document.getElementById("finishOnboardingSetupButton"),
+  dashboardTour: document.getElementById("dashboardTour"),
+  dashboardTourStepLabel: document.getElementById("dashboardTourStepLabel"),
+  dashboardTourContent: document.getElementById("dashboardTourContent"),
+  dashboardTourSkipButton: document.getElementById("dashboardTourSkipButton"),
+  dashboardTourNextButton: document.getElementById("dashboardTourNextButton"),
   form: document.getElementById("entryForm"),
   description: document.getElementById("description"),
   amount: document.getElementById("amount"),
@@ -323,6 +336,11 @@ const els = {
   savingsGoalName: document.getElementById("savingsGoalName"),
   savingsGoalAmount: document.getElementById("savingsGoalAmount"),
   savingsBufferMonths: document.getElementById("savingsBufferMonths"),
+  savingsProgressTitle: document.getElementById("savingsProgressTitle"),
+  savingsProgressPercent: document.getElementById("savingsProgressPercent"),
+  savingsProgressBar: document.getElementById("savingsProgressBar"),
+  savingsProgressStatus: document.getElementById("savingsProgressStatus"),
+  savingsProgressPace: document.getElementById("savingsProgressPace"),
   saveSavingsGoalButton: document.getElementById("saveSavingsGoalButton"),
   savingsSummaryCards: document.getElementById("savingsSummaryCards"),
   savingsInsightsList: document.getElementById("savingsInsightsList"),
@@ -368,7 +386,7 @@ async function init() {
     await waitFor(900);
     els.loadingScreen.hidden = true;
   }
-  if (els.appShell) {
+  if (els.appShell && !state.currentUser.needsOnboarding) {
     els.appShell.hidden = false;
   }
   setMobileDashboardStartPosition();
@@ -653,7 +671,7 @@ async function initializeDashboard() {
 
   hasInitializedDashboard = true;
   hydrateSidebarState();
-  hydrateCategoryModel();
+  await hydrateCategoryModel();
   hydrateSavingsGoal();
   setDefaultDate();
   populateParentCategories("expense");
@@ -669,6 +687,9 @@ async function initializeDashboard() {
   wireEvents();
   suggestCategoryFromDescription();
   await refreshTransactions();
+  if (state.currentUser.needsOnboarding) {
+    openOnboardingScreen();
+  }
 
   logTransactionLoad("initializeDashboard() complete", {
     transactionsInState: state.transactions.length,
@@ -733,6 +754,12 @@ function wireEvents() {
   if (els.saveUserProfilePinButton) {
     els.saveUserProfilePinButton.addEventListener("click", onSaveUserProfilePin);
   }
+  if (els.openOnboardingFromProfileButton) {
+    els.openOnboardingFromProfileButton.addEventListener("click", () => {
+      closeUserProfileModal();
+      openOnboardingScreen();
+    });
+  }
   if (els.openUserManagementButton) {
     els.openUserManagementButton.addEventListener("click", openUserManagementModal);
   }
@@ -742,12 +769,37 @@ function wireEvents() {
   if (els.createUserButton) {
     els.createUserButton.addEventListener("click", onCreateUser);
   }
+  if (els.userManagementBody) {
+    els.userManagementBody.addEventListener("click", onUserManagementAction);
+  }
   if (els.openSettingsButton) {
     els.openSettingsButton.addEventListener("click", onOpenSettings);
   }
   if (els.closeSettingsButton) {
     els.closeSettingsButton.addEventListener("click", closeSettingsModal);
   }
+  if (els.addOnboardingParentButton) {
+    els.addOnboardingParentButton.addEventListener("click", addOnboardingParent);
+  }
+  if (els.finishOnboardingSetupButton) {
+    els.finishOnboardingSetupButton.addEventListener("click", finishOnboardingSetup);
+  }
+  if (els.dashboardTourNextButton) {
+    els.dashboardTourNextButton.addEventListener("click", advanceDashboardTour);
+  }
+  if (els.dashboardTourSkipButton) {
+    els.dashboardTourSkipButton.addEventListener("click", closeDashboardTour);
+  }
+  if (els.onboardingBuilder) {
+    els.onboardingBuilder.addEventListener("input", onOnboardingBuilderInput);
+    els.onboardingBuilder.addEventListener("click", onOnboardingBuilderAction);
+  }
+  document.querySelectorAll("[data-onboarding-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      onboardingActiveType = button.dataset.onboardingType === "income" ? "income" : "expense";
+      renderOnboardingBuilder();
+    });
+  });
   if (els.settingsTypeSelect) {
     els.settingsTypeSelect.addEventListener("change", onSettingsTypeChange);
   }
@@ -1237,7 +1289,7 @@ async function refreshUserManagementList() {
     return;
   }
 
-  els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">Loading...</td></tr>';
+  els.userManagementBody.innerHTML = '<tr><td colspan="4" class="empty-state">Loading...</td></tr>';
 
   try {
     const response = await apiFetch("/api/users");
@@ -1247,7 +1299,7 @@ async function refreshUserManagementList() {
 
     const users = await response.json();
     if (!Array.isArray(users) || !users.length) {
-      els.userManagementBody.innerHTML = '<tr><td colspan="3" class="empty-state">No Users Found.</td></tr>';
+      els.userManagementBody.innerHTML = '<tr><td colspan="4" class="empty-state">No Users Found.</td></tr>';
       return;
     }
 
@@ -1257,11 +1309,52 @@ async function refreshUserManagementList() {
           <td>${escapeHtml(user.displayName)}</td>
           <td>${user.isAdmin ? "Admin" : "Member"}</td>
           <td>${formatDateForDisplay(new Date(Number(user.createdAt)).toISOString().slice(0, 10))}</td>
+          <td class="user-management-actions">
+            <button class="mini-btn icon-action-btn" type="button" data-action="reset-onboarding" data-user-id="${escapeHtml(user.id)}" aria-label="Reset setup tour for ${escapeHtml(user.displayName)}" title="Reset setup tour">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 11a8 8 0 1 0 2 5.3"/><path d="M20 4v7h-7"/></svg>
+            </button>
+            <button class="mini-btn icon-action-btn delete-action-btn" type="button" data-action="delete-user" data-user-id="${escapeHtml(user.id)}" data-user-name="${escapeHtml(user.displayName)}" aria-label="Delete ${escapeHtml(user.displayName)}" title="Delete user">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+            </button>
+          </td>
         </tr>
       `)
       .join("");
   } catch (error) {
-    els.userManagementBody.innerHTML = `<tr><td colspan="3" class="empty-state">${escapeHtml(error.message || "Could Not Load Users.")}</td></tr>`;
+    els.userManagementBody.innerHTML = `<tr><td colspan="4" class="empty-state">${escapeHtml(error.message || "Could Not Load Users.")}</td></tr>`;
+  }
+}
+
+async function onUserManagementAction(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.action === "delete-user") {
+    const userName = button.dataset.userName || "this user";
+    if (!window.confirm(`Delete ${userName}? Their transactions, trips, and category setup will also be deleted.`)) {
+      return;
+    }
+  }
+
+  button.disabled = true;
+  try {
+    const isDelete = button.dataset.action === "delete-user";
+    const response = await apiFetch(
+      isDelete
+        ? `/api/users/${encodeURIComponent(button.dataset.userId)}`
+        : `/api/users/${encodeURIComponent(button.dataset.userId)}/onboarding-reset`,
+      { method: isDelete ? "DELETE" : "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, isDelete ? "Could Not Delete User" : "Could Not Reset Onboarding"));
+    }
+    setUserManagementMessage(isDelete ? "User Deleted." : "Setup Tour Reset For User.", false);
+    await refreshUserManagementList();
+  } catch (error) {
+    setUserManagementMessage(error.message || "Could Not Complete User Action.", true);
+    button.disabled = false;
   }
 }
 
@@ -1321,6 +1414,7 @@ async function refreshCurrentUser() {
     const data = await response.json();
     state.currentUser.displayName = data.displayName || "";
     state.currentUser.isAdmin = Boolean(data.isAdmin);
+    state.currentUser.needsOnboarding = Boolean(data.needsOnboarding);
     if (els.currentUserGreeting) {
       const firstName = state.currentUser.displayName.trim().split(/\s+/)[0] || "";
       els.currentUserGreeting.textContent = firstName ? `Welcome back, ${firstName}` : "";
@@ -1331,6 +1425,217 @@ async function refreshCurrentUser() {
 
   if (els.openUserManagementButton) {
     els.openUserManagementButton.hidden = !state.currentUser.isAdmin;
+  }
+}
+
+let onboardingModel = null;
+let onboardingActiveType = "expense";
+
+function openOnboardingScreen() {
+  if (!els.onboardingScreen) {
+    return;
+  }
+
+  onboardingModel = JSON.parse(JSON.stringify(CATEGORY_MODEL));
+  for (const type of ["income", "expense"]) {
+    for (const group of onboardingModel[type] || []) {
+      for (const subcategory of group.subcategories || []) {
+        subcategory.keywords = [];
+      }
+    }
+  }
+  onboardingActiveType = "expense";
+  els.appShell.hidden = true;
+  els.onboardingScreen.hidden = false;
+  renderOnboardingBuilder();
+}
+
+function renderOnboardingBuilder() {
+  if (!els.onboardingBuilder || !onboardingModel) {
+    return;
+  }
+
+  document.querySelectorAll("[data-onboarding-type]").forEach((button) => {
+    const active = button.dataset.onboardingType === onboardingActiveType;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.onboardingBuilder.innerHTML = (onboardingModel[onboardingActiveType] || []).map((group, groupIndex) => `
+    <article class="onboarding-builder-card">
+      <div class="onboarding-builder-card-header">
+        <label class="onboarding-field onboarding-parent-field">
+          <span class="onboarding-field-label"><strong>Category</strong></span>
+          <input type="text" data-onboarding-parent-name="${groupIndex}" value="${escapeHtml(group.name)}" placeholder="e.g. Home">
+        </label>
+        <button class="danger-btn" type="button" data-onboarding-action="delete-parent" data-group-index="${groupIndex}">Delete parent</button>
+      </div>
+      <div class="onboarding-subcategory-heading">
+        <span><strong>Subcategories</strong></span>
+      </div>
+      <div class="onboarding-subcategory-list">
+        ${(group.subcategories || []).map((sub, subIndex) => `
+          <div class="onboarding-subcategory-row">
+            <label class="onboarding-field">
+              <span class="onboarding-field-label"><strong>Subcategory name</strong></span>
+              <input type="text" data-onboarding-sub-name="${groupIndex}:${subIndex}" value="${escapeHtml(sub.name)}" placeholder="e.g. Rent">
+            </label>
+            <button class="ghost-btn onboarding-delete-subcategory" type="button" data-onboarding-action="delete-subcategory" data-group-index="${groupIndex}" data-sub-index="${subIndex}" aria-label="Delete subcategory">Remove</button>
+          </div>
+        `).join("")}
+      </div>
+      <button class="ghost-btn onboarding-add-subcategory" type="button" data-onboarding-action="add-subcategory" data-group-index="${groupIndex}">+ Add subcategory</button>
+    </article>
+  `).join("") || '<p class="onboarding-empty-state">No parent categories yet. Add one below to get started.</p>';
+
+  if (els.onboardingScreenStep) {
+    els.onboardingScreenStep.textContent = `${toTitleCase(onboardingActiveType)} setup`;
+  }
+}
+
+function onOnboardingBuilderInput(event) {
+  const input = event.target;
+  if (input.matches("[data-onboarding-parent-name]")) {
+    onboardingModel[onboardingActiveType][Number(input.dataset.onboardingParentName)].name = input.value;
+    return;
+  }
+  const subMatch = input.dataset.onboardingSubName?.split(":");
+  if (subMatch) {
+    onboardingModel[onboardingActiveType][Number(subMatch[0])].subcategories[Number(subMatch[1])].name = input.value;
+  }
+}
+
+function onOnboardingBuilderAction(event) {
+  const button = event.target.closest("[data-onboarding-action]");
+  if (!button) {
+    return;
+  }
+  const groups = onboardingModel[onboardingActiveType];
+  const groupIndex = Number(button.dataset.groupIndex);
+  if (button.dataset.onboardingAction === "delete-parent") {
+    groups.splice(groupIndex, 1);
+  } else if (button.dataset.onboardingAction === "add-subcategory") {
+    groups[groupIndex].subcategories.push({ name: "", keywords: [] });
+  } else if (button.dataset.onboardingAction === "delete-subcategory") {
+    groups[groupIndex].subcategories.splice(Number(button.dataset.subIndex), 1);
+  }
+  renderOnboardingBuilder();
+}
+
+function addOnboardingParent() {
+  onboardingModel[onboardingActiveType].push({
+    name: "",
+    subcategories: [{ name: "", keywords: [] }]
+  });
+  renderOnboardingBuilder();
+  requestAnimationFrame(() => {
+    els.onboardingBuilder.querySelector("[data-onboarding-parent-name]:last-of-type")?.focus();
+  });
+}
+
+async function finishOnboardingSetup() {
+  if (!els.finishOnboardingSetupButton || els.finishOnboardingSetupButton.disabled) {
+    return;
+  }
+
+  const selectedModel = normalizeCategoryModelShape(onboardingModel || {});
+  if (!isValidCategoryModel(selectedModel)) {
+    setOnboardingSetupMessage("Add at least one named parent and one named subcategory for both Expenses and Income.", true);
+    return;
+  }
+
+  els.finishOnboardingSetupButton.disabled = true;
+  setOnboardingSetupMessage("Saving your personal setup…", false);
+  try {
+    const response = await apiFetch("/api/category-model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: selectedModel })
+    });
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Save Categories"));
+    }
+    CATEGORY_MODEL = normalizeCategoryModelShape(await response.json());
+    state.currentUser.needsOnboarding = false;
+    els.onboardingScreen.hidden = true;
+    els.appShell.hidden = false;
+    populateParentCategories(els.entryType?.value || "expense");
+    suggestCategoryFromDescription();
+    setOnboardingSetupMessage("", false);
+    openDashboardTour();
+  } catch (error) {
+    setOnboardingSetupMessage(error.message || "Could Not Save Categories.", true);
+  } finally {
+    els.finishOnboardingSetupButton.disabled = false;
+  }
+}
+
+function setOnboardingSetupMessage(message, isError) {
+  if (!els.onboardingSetupMessage) {
+    return;
+  }
+  els.onboardingSetupMessage.textContent = message;
+  els.onboardingSetupMessage.style.color = isError ? "#ff4766" : "#86ffb8";
+}
+
+const dashboardTourSteps = [
+  {
+    title: "Start with Quick Add",
+    body: "Use Quick Add to record income or expenses. Pulse will use the categories you just chose, and you can add keywords later when you are ready."
+  },
+  {
+    title: "Watch your rhythm",
+    body: "The summary cards and charts show your income, spending, net balance, and savings rate for the current month and year."
+  },
+  {
+    title: "Find anything quickly",
+    body: "Use the transaction log, search, filters, and edit actions to keep your records accurate. Data also includes import, export, and backup tools."
+  },
+  {
+    title: "Make it yours over time",
+    body: "Settings is where you can rename categories, add more subcategories, and teach Pulse keywords for automatic suggestions."
+  }
+];
+let dashboardTourStepIndex = 0;
+
+function openDashboardTour() {
+  if (!els.dashboardTour) {
+    return;
+  }
+
+  dashboardTourStepIndex = 0;
+  renderDashboardTourStep();
+  els.dashboardTour.hidden = false;
+}
+
+function renderDashboardTourStep() {
+  const step = dashboardTourSteps[dashboardTourStepIndex];
+  if (!step || !els.dashboardTourContent || !els.dashboardTourStepLabel || !els.dashboardTourNextButton) {
+    return;
+  }
+
+  els.dashboardTourStepLabel.textContent = `${dashboardTourStepIndex + 1} of ${dashboardTourSteps.length}`;
+  els.dashboardTourContent.innerHTML = `
+    <h2>${escapeHtml(step.title)}</h2>
+    <p>${escapeHtml(step.body)}</p>
+  `;
+  els.dashboardTourNextButton.textContent = dashboardTourStepIndex === dashboardTourSteps.length - 1
+    ? "Start Using Pulse"
+    : "Next";
+}
+
+function advanceDashboardTour() {
+  if (dashboardTourStepIndex >= dashboardTourSteps.length - 1) {
+    closeDashboardTour();
+    return;
+  }
+
+  dashboardTourStepIndex += 1;
+  renderDashboardTourStep();
+}
+
+function closeDashboardTour() {
+  if (els.dashboardTour) {
+    els.dashboardTour.hidden = true;
   }
 }
 
@@ -1419,24 +1724,21 @@ function migrateCategoryModelLabels(model) {
   return copy;
 }
 
-function hydrateCategoryModel() {
+async function hydrateCategoryModel() {
   try {
-    const raw = window.localStorage.getItem(CATEGORY_MODEL_STORAGE_KEY);
-    if (!raw) {
-      CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
-      return;
+    const response = await apiFetch("/api/category-model");
+    if (response.ok) {
+      const parsed = normalizeCategoryModelShape(migrateCategoryModelLabels(await response.json()));
+      if (isValidCategoryModel(parsed)) {
+        CATEGORY_MODEL = parsed;
+        return;
+      }
     }
-
-    const parsed = normalizeCategoryModelShape(migrateCategoryModelLabels(JSON.parse(raw)));
-    if (!isValidCategoryModel(parsed)) {
-      CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
-      return;
-    }
-
-    CATEGORY_MODEL = parsed;
   } catch {
-    CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
+    // Use the default model when the category endpoint is temporarily unavailable.
   }
+
+  CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
 }
 
 function openSettingsModal() {
@@ -1814,7 +2116,7 @@ function onSettingsKeywordAction(event) {
   renderSettingsEditor();
 }
 
-function saveCategoryModelFromUi() {
+async function saveCategoryModelFromUi() {
   const parsed = normalizeCategoryModelShape(settingsState.draftModel || {});
 
   if (!isValidCategoryModel(parsed)) {
@@ -1822,8 +2124,20 @@ function saveCategoryModelFromUi() {
     return;
   }
 
-  CATEGORY_MODEL = parsed;
-  window.localStorage.setItem(CATEGORY_MODEL_STORAGE_KEY, JSON.stringify(CATEGORY_MODEL));
+  try {
+    const response = await apiFetch("/api/category-model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: parsed })
+    });
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Save Category Settings"));
+    }
+    CATEGORY_MODEL = normalizeCategoryModelShape(await response.json());
+  } catch (error) {
+    setImportMessage(error.message || "Could Not Save Category Settings.", true);
+    return;
+  }
 
   const activeType = els.entryType?.value || "expense";
   const selectedParent = els.parentCategorySelect?.value;
@@ -1835,9 +2149,21 @@ function saveCategoryModelFromUi() {
   setImportMessage("Category Settings Saved.", false);
 }
 
-function resetCategoryModelToDefault() {
-  CATEGORY_MODEL = JSON.parse(JSON.stringify(DEFAULT_CATEGORY_MODEL));
-  window.localStorage.removeItem(CATEGORY_MODEL_STORAGE_KEY);
+async function resetCategoryModelToDefault() {
+  try {
+    const response = await apiFetch("/api/category-model", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: DEFAULT_CATEGORY_MODEL })
+    });
+    if (!response.ok) {
+      throw new Error(await getErrorMessage(response, "Could Not Reset Category Settings"));
+    }
+    CATEGORY_MODEL = normalizeCategoryModelShape(await response.json());
+  } catch (error) {
+    setImportMessage(error.message || "Could Not Reset Category Settings.", true);
+    return;
+  }
 
   settingsState.draftModel = JSON.parse(JSON.stringify(CATEGORY_MODEL));
   settingsState.parentName = "";
@@ -2015,19 +2341,32 @@ function renderSavingsInsights() {
   const goalName = state.savingsGoal.name || "No Goal Set";
   const targetText = metrics.target > 0 ? formatMoney(metrics.target) : "Set A Target";
   const remainingText = metrics.target > 0 ? formatMoney(metrics.remaining) : "-";
-  const progressText = metrics.target > 0 ? `${Math.round(metrics.progress)}%` : "-";
   const monthsText = metrics.monthsToGoal ? `${metrics.monthsToGoal} Month${metrics.monthsToGoal === 1 ? "" : "s"}` : "-";
 
+  if (els.savingsProgressTitle && els.savingsProgressPercent && els.savingsProgressBar && els.savingsProgressStatus && els.savingsProgressPace) {
+    const progress = metrics.target > 0 ? Math.round(metrics.progress) : 0;
+    els.savingsProgressTitle.textContent = metrics.target > 0
+      ? `${goalName} is ${progress}% funded`
+      : "Set a goal to start tracking";
+    els.savingsProgressPercent.textContent = metrics.target > 0 ? `${progress}%` : "—";
+    els.savingsProgressBar.style.width = `${progress}%`;
+    els.savingsProgressStatus.textContent = metrics.target > 0
+      ? metrics.remaining > 0
+        ? `${formatMoney(metrics.remaining)} left after your comfort buffer`
+        : "Goal reached with your comfort buffer protected"
+      : "Add a target and your transactions will do the math for you.";
+    els.savingsProgressPace.textContent = metrics.avgMonthlyNet > 0
+      ? `${formatMoney(metrics.avgMonthlyNet)} average monthly pace`
+      : metrics.monthsTracked > 0
+        ? "Build a positive monthly pace to see an estimate"
+        : "";
+  }
+
   els.savingsSummaryCards.innerHTML = `
-    <article class="savings-card"><p>Goal</p><h4>${escapeHtml(goalName)}</h4></article>
     <article class="savings-card"><p>Target</p><h4>${targetText}</h4></article>
-    <article class="savings-card"><p>Net Saved (Raw)</p><h4>${formatMoney(metrics.currentSaved)}</h4></article>
-    <article class="savings-card"><p>Comfort Buffer</p><h4>${formatMoney(metrics.comfortBuffer)}</h4></article>
-    <article class="savings-card"><p>Safe To Use For Goal</p><h4>${formatMoney(metrics.comfortableSaved)}</h4></article>
+    <article class="savings-card"><p>Safe For Goal</p><h4>${formatMoney(metrics.comfortableSaved)}</h4></article>
     <article class="savings-card"><p>Remaining</p><h4>${remainingText}</h4></article>
-    <article class="savings-card"><p>Progress</p><h4>${progressText}</h4></article>
     <article class="savings-card"><p>Est. Time To Goal</p><h4>${monthsText}</h4></article>
-    <article class="savings-card"><p>Avg Monthly Income</p><h4>${formatMoney(metrics.avgMonthlyIncome)}</h4></article>
     <article class="savings-card"><p>Avg Monthly Spending</p><h4>${formatMoney(metrics.avgMonthlySpending)}</h4></article>
     <article class="savings-card"><p>Avg Monthly Net</p><h4>${formatMoney(metrics.avgMonthlyNet)}</h4></article>
   `;
@@ -2379,24 +2718,30 @@ function populateSubcategories(type, parentCategory, selectedSubcategory) {
 
 function classifyCategory(description, type) {
   const lower = (description || "").toLowerCase();
+  const typesToCheck = type === "income" ? ["income", "expense"] : ["expense", "income"];
 
-  for (const group of getGroups(type)) {
-    for (const subcategory of group.subcategories) {
-      if (subcategory.keywords.some((keyword) => lower.includes(keyword))) {
-        return { parentCategory: group.name, category: subcategory.name };
+  for (const typeToCheck of typesToCheck) {
+    for (const group of getGroups(typeToCheck)) {
+      for (const subcategory of group.subcategories) {
+        if (subcategory.keywords.some((keyword) => lower.includes(keyword))) {
+          return { type: typeToCheck, parentCategory: group.name, category: subcategory.name };
+        }
       }
     }
   }
 
   return type === "income"
-    ? { parentCategory: "Income", category: "Salary" }
-    : { parentCategory: "Personal", category: "Food" };
+    ? { type: "income", parentCategory: "Income", category: "Salary" }
+    : { type: "expense", parentCategory: "Personal", category: "Food" };
 }
 
 function suggestCategoryFromDescription() {
   const suggested = classifyCategory(els.description.value, els.entryType.value);
-  populateParentCategories(els.entryType.value, suggested.parentCategory);
-  populateSubcategories(els.entryType.value, suggested.parentCategory, suggested.category);
+  if (suggested.type !== els.entryType.value) {
+    els.entryType.value = suggested.type;
+  }
+  populateParentCategories(suggested.type, suggested.parentCategory);
+  populateSubcategories(suggested.type, suggested.parentCategory, suggested.category);
 }
 
 function getActiveMonthRange() {

@@ -3,11 +3,26 @@
 Budget Pulse is a full-stack personal finance dashboard with:
 
 - Quick Add transaction entry
-- Auto-categorization by keyword rules
+- Per-user categories, subcategories, and keyword-based auto-categorization
+- First-login setup walkthrough for new dashboard users
 - Import preview and commit from Excel
 - Export to Excel and backup CSV
 - Trip tagging and summaries
 - Local SQLite storage
+
+## Product Direction
+
+Pulse is being developed as a personal financial memory and planning system:
+**leave the spreadsheet, keep the control.** The [production plan](PRODUCT_PLAN.md)
+defines the product positioning, roadmap, release gates, success metrics, privacy
+requirements, and prioritized backlog.
+
+## Why "Pulse"
+
+The name reflects Pulse's central promise: stay close to your own financial data
+and understand what it means. Rather than handing that meaning to an opaque
+automated service, Pulse keeps the categories, context, history, and decisions
+in the user's hands.
 
 ## Run Locally
 
@@ -15,12 +30,13 @@ Budget Pulse is a full-stack personal finance dashboard with:
   - `npm install`
 2. Copy env template (optional for local):
   - `copy .env.example .env`
+  - Set `DATABASE_URL` in `.env` to your Supabase Postgres connection string. Localhost uses whichever database this variable points to.
 3. Start server:
   - `npm start`
 4. Open:
   - `http://localhost:4100`
 
-Local data is stored in `budget.db`.
+The server uses PostgreSQL through `DATABASE_URL`. If `DATABASE_URL` is missing, the PostgreSQL driver attempts its local default connection instead, which is a different database from Supabase.
 
 ## Environment Variables
 
@@ -76,7 +92,29 @@ Current storage is SQLite (`budget.db`). On free cloud runtimes, local disk pers
 
 ## Customize Classification
 
-Edit rule sets in:
+Each signed-in user starts with the default Pulse category model, then can customize it independently:
+
+On a user's first login, Pulse opens a dedicated setup screen before the dashboard. The user must build a valid personal category model with at least one income parent/subcategory and one expense parent/subcategory before entering Pulse. The default model is provided as a recommendation, and the user can rename, remove, or add parents and subcategories. Keywords can be added later from Settings.
+
+The setup screen can be reopened from **User Menu > User Profile > Open Setup Tour**. An administrator can reset setup for a user from **User Menu > User Management** if needed.
+
+Onboarding status is stored in the `users.is_new` boolean. Existing users default to `false`; newly created invited users are set to `true`. If the deployment cannot run schema changes automatically, run this once in the Supabase SQL editor:
+
+```sql
+alter table public.users
+add column if not exists is_new boolean not null default false;
+```
+
+1. Open **User Menu > Settings**.
+2. Add, rename, or delete parent categories and subcategories.
+3. Add keywords to each subcategory when you want automatic suggestions.
+4. Save the model.
+
+Quick Add suggestions and Excel import classification use the signed-in user's saved keywords. Category models are stored server-side and are not shared between users.
+
+Category models are stored in the `user_category_models` table. Each user has one row, with the complete category and subcategory structure stored in the `model` JSONB column. The `users.is_new` column only tracks whether mandatory setup still needs to be completed; it does not store category names.
+
+The default seed model is defined in:
 
 - `app.js`
 - `server.js`
