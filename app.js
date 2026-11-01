@@ -120,6 +120,7 @@ const state = {
     needsOnboarding: false
   },
   monthOffset: 0,
+  insightsYearOffset: 0,
   monthLogDeleteMode: false,
   monthLogSelectedIds: new Set(),
   savingsGoal: {
@@ -187,6 +188,13 @@ const els = {
   sidebarToggleButton: document.getElementById("sidebarToggleButton"),
   mobileNavToggleButton: document.getElementById("mobileNavToggleButton"),
   openQuickAddButton: document.getElementById("openQuickAddButton"),
+  mobileProfileButton: document.getElementById("mobileProfileButton"),
+  mobileHomeButton: document.getElementById("mobileHomeButton"),
+  mobileInsightsButton: document.getElementById("mobileInsightsButton"),
+  mobileQuickAddButton: document.getElementById("mobileQuickAddButton"),
+  mobileCalendarButton: document.getElementById("mobileCalendarButton"),
+  mobileSettingsButton: document.getElementById("mobileSettingsButton"),
+  mobilePageView: document.getElementById("mobilePageView"),
   closeQuickAddButton: document.getElementById("closeQuickAddButton"),
   workspaceTools: document.querySelector(".workspace-tools"),
   openUserProfileButton: document.getElementById("openUserProfileButton"),
@@ -717,6 +725,30 @@ function wireEvents() {
   if (els.openQuickAddButton) {
     els.openQuickAddButton.addEventListener("click", openQuickAddModal);
   }
+  if (els.mobileProfileButton) {
+    els.mobileProfileButton.addEventListener("click", onOpenUserProfile);
+  }
+  if (els.mobileHomeButton) {
+    els.mobileHomeButton.addEventListener("click", () => setMobilePage("home"));
+  }
+  if (els.mobileInsightsButton) {
+    els.mobileInsightsButton.addEventListener("click", () => setMobilePage("insights"));
+  }
+  if (els.mobileQuickAddButton) {
+    els.mobileQuickAddButton.addEventListener("click", () => {
+      els.mobileQuickAddButton.classList.remove("is-pressed");
+      void els.mobileQuickAddButton.offsetWidth;
+      els.mobileQuickAddButton.classList.add("is-pressed");
+      window.setTimeout(() => els.mobileQuickAddButton.classList.remove("is-pressed"), 220);
+      openQuickAddModal();
+    });
+  }
+  if (els.mobileCalendarButton) {
+    els.mobileCalendarButton.addEventListener("click", () => setMobilePage("calendar"));
+  }
+  if (els.mobileSettingsButton) {
+    els.mobileSettingsButton.addEventListener("click", () => setMobilePage("settings"));
+  }
   if (els.closeQuickAddButton) {
     els.closeQuickAddButton.addEventListener("click", closeQuickAddModal);
   }
@@ -1007,6 +1039,333 @@ function setMobileNavOpen(isOpen) {
   els.appShell.classList.toggle("mobile-nav-open", isOpen);
   els.mobileNavToggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
   els.mobileNavToggleButton.textContent = isOpen ? "Close" : "Menu";
+}
+
+function renderMobileTransactionRow(transaction) {
+  const tripName = getTripNameById(transaction.tripId);
+  return `<div class="mobile-transaction-row">
+    <div>
+      <strong>${escapeHtml(transaction.description)}</strong>
+      <span>${escapeHtml(transaction.category || "Uncategorized")} · ${formatDateForDisplay(transaction.date)}</span>
+    </div>
+    <div class="mobile-transaction-meta">
+      ${tripName ? `<span class="mobile-trip-badge" title="Trip: ${escapeHtml(tripName)}" aria-label="Trip: ${escapeHtml(tripName)}">✈ ${escapeHtml(tripName)}</span>` : ""}
+      <b class="${transaction.type === "income" ? "positive" : ""}">${transaction.type === "income" ? "+" : "-"}${formatMoney(transaction.amount)}</b>
+    </div>
+  </div>`;
+}
+
+function renderMobileCalendarGroups(transactions) {
+  const groupedTransactions = new Map();
+  for (const transaction of transactions) {
+    const dateKey = String(transaction.date || "").slice(0, 10);
+    if (!groupedTransactions.has(dateKey)) {
+      groupedTransactions.set(dateKey, []);
+    }
+    groupedTransactions.get(dateKey).push(transaction);
+  }
+
+  return Array.from(groupedTransactions.entries())
+    .sort(([dateA], [dateB]) => dateB.localeCompare(dateA))
+    .map(([date, dailyTransactions]) => `
+      <section class="mobile-calendar-day">
+        <div class="mobile-calendar-day-heading">
+          <h4>${escapeHtml(formatDateForDisplay(date))}</h4>
+          <span>${dailyTransactions.length}</span>
+        </div>
+        <div class="mobile-calendar-day-transactions">
+          ${dailyTransactions.map(renderMobileTransactionRow).join("")}
+        </div>
+      </section>
+    `)
+    .join("");
+}
+
+let mobilePage = "home";
+let mobileSettingsView = "root";
+let mobilePageTransition = "";
+
+function getMobileMerchantKey(description) {
+  const normalized = String(description || "")
+    .toLowerCase()
+    .replace(/\b(transaction|purchase|payment|pos|online|www)\b/g, " ")
+    .replace(/[#*]/g, " ")
+    .replace(/\b\d{2,}\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+  return normalized || "uncategorized";
+}
+
+function getMobileInsightGroups(transactions) {
+  const groups = new Map();
+  for (const transaction of transactions) {
+    if (transaction.type === "income") {
+      continue;
+    }
+
+    const parentName = normalizeLegacyParentCategory(transaction.parentCategory) || "Expenses";
+    const subcategoryName = normalizeLegacyCategoryLabel(transaction.category) || "Other";
+    const amount = Number(transaction.amount || 0);
+    if (!Number.isFinite(amount)) {
+      continue;
+    }
+
+    if (!groups.has(parentName)) {
+      groups.set(parentName, { name: parentName, total: 0, subcategories: new Map() });
+    }
+    const group = groups.get(parentName);
+    group.total += amount;
+    if (!group.subcategories.has(subcategoryName)) {
+      group.subcategories.set(subcategoryName, { name: subcategoryName, total: 0, count: 0, merchants: new Map() });
+    }
+    const subcategory = group.subcategories.get(subcategoryName);
+    subcategory.total += amount;
+    subcategory.count += 1;
+
+    const merchantKey = getMobileMerchantKey(transaction.description);
+    if (!subcategory.merchants.has(merchantKey)) {
+      subcategory.merchants.set(merchantKey, {
+        name: String(transaction.description || "Uncategorized").trim() || "Uncategorized",
+        total: 0,
+        count: 0
+      });
+    }
+    const merchant = subcategory.merchants.get(merchantKey);
+    merchant.total += amount;
+    merchant.count += 1;
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      subcategories: [...group.subcategories.values()]
+        .map((subcategory) => ({
+          ...subcategory,
+          merchants: [...subcategory.merchants.values()].sort((a, b) => b.total - a.total)
+        }))
+        .sort((a, b) => b.total - a.total)
+    }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function setMobilePage(page) {
+  mobilePage = page;
+  mobilePageTransition = "forward";
+  if (page === "settings") {
+    mobileSettingsView = "root";
+  }
+  document.querySelectorAll(".mobile-bottom-nav-item").forEach((button) => {
+    button.classList.toggle("is-active", button.id === `mobile${page[0].toUpperCase()}${page.slice(1)}Button`);
+  });
+  const activeButton = document.getElementById(`mobile${page[0].toUpperCase()}${page.slice(1)}Button`);
+  if (activeButton) {
+    const bottomNav = activeButton.closest(".mobile-bottom-nav");
+    if (bottomNav) {
+      bottomNav.style.setProperty("--mobile-active-left", `${activeButton.offsetLeft}px`);
+      bottomNav.style.setProperty("--mobile-active-width", `${activeButton.offsetWidth}px`);
+    }
+    activeButton.classList.remove("is-pressed");
+    void activeButton.offsetWidth;
+    activeButton.classList.add("is-pressed");
+    window.setTimeout(() => activeButton.classList.remove("is-pressed"), 220);
+  }
+  renderMobilePage();
+}
+
+function renderMobilePage() {
+  if (!els.mobilePageView) {
+    return;
+  }
+
+  const monthTransactions = getTransactionsForActiveMonth();
+  const { start } = getActiveMonthRange();
+  const monthName = start.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const insightsYear = new Date(new Date().getFullYear() - state.insightsYearOffset, 0, 1);
+  const yearTransactions = getYearToDateTransactions(insightsYear);
+  const yearIncome = yearTransactions.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  const yearSpending = yearTransactions.filter((tx) => tx.type !== "income").reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+  const yearNet = yearIncome - yearSpending;
+  const { totals } = getParentTotals(monthTransactions.filter((tx) => tx.type !== "income"));
+  const yearExpenses = yearTransactions.filter((tx) => tx.type !== "income");
+  const insightGroups = getMobileInsightGroups(yearTransactions);
+  const largestExpense = yearExpenses.reduce((largest, tx) => Number(tx.amount || 0) > Number(largest?.amount || 0) ? tx : largest, null);
+  const averageExpense = yearExpenses.length ? yearSpending / yearExpenses.length : 0;
+  const topMerchant = insightGroups
+    .flatMap((group) => group.subcategories.flatMap((subcategory) => subcategory.merchants))
+    .sort((a, b) => b.total - a.total)[0];
+  const recentTransactions = state.transactions
+    .slice()
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0) || String(b.date).localeCompare(String(a.date)))
+    .slice(0, 5);
+
+  if (mobilePage === "home") {
+    els.mobilePageView.innerHTML = `
+      <div class="mobile-month-switcher">
+        <div><p class="mobile-page-kicker">Overview</p><strong>${escapeHtml(monthName)}</strong></div>
+        <button class="mobile-icon-button" data-mobile-action="search" aria-label="Search transactions"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
+        <button class="mobile-month-button" data-mobile-action="previous-month" aria-label="Previous month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg></button>
+        <button class="mobile-month-button" data-mobile-action="next-month" aria-label="Next month" ${state.monthOffset === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      </div>
+      <div class="mobile-animated-content">
+      <section class="mobile-hero-card">
+        <p>MONTHLY NET</p><strong>${els.balanceValue.textContent}</strong>
+      </section>
+      <section class="mobile-summary-grid">
+        <article><span>Income</span><strong>${els.incomeValue.textContent}</strong></article>
+        <article><span>Spending</span><strong>${els.expenseValue.textContent}</strong></article>
+        <article><span>Transactions</span><strong>${monthTransactions.length}</strong></article>
+        <article><span>Savings rate</span><strong>${els.savingsRateValue.textContent}</strong></article>
+      </section>
+      <section class="mobile-page-card"><div class="mobile-section-title"><h3>Top categories</h3><span>${monthTransactions.length} entries</span></div>
+        ${Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([name, total]) => `
+          <div class="mobile-category-row"><span>${escapeHtml(name)}</span><strong>${formatMoney(total)}</strong><i><b style="width:${Math.min(100, (total / Math.max(...Object.values(totals), 1)) * 100)}%"></b></i></div>
+        `).join("") || '<p class="mobile-empty">No spending recorded for this month.</p>'}
+      </section>
+      <section class="mobile-page-card"><div class="mobile-section-title"><h3>Recent transactions</h3><span>Latest 5</span></div>
+        ${recentTransactions.map(renderMobileTransactionRow).join("") || '<p class="mobile-empty">No transactions recorded yet.</p>'}
+      </section>
+      </div>
+    `;
+  } else if (mobilePage === "insights") {
+    els.mobilePageView.innerHTML = `
+      <header class="mobile-page-header"><div><p class="mobile-page-kicker">Insights</p><h2>${insightsYear.getFullYear()} summary</h2></div>
+        <div class="mobile-year-switcher">
+          <button class="mobile-month-button" data-mobile-action="previous-year" aria-label="Previous year"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg></button>
+          <button class="mobile-month-button" data-mobile-action="next-year" aria-label="Next year" ${state.insightsYearOffset === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+        </div>
+      </header>
+      <div class="mobile-animated-content">
+      <section class="mobile-hero-card"><p>YEAR NET</p><strong>${formatMoney(yearNet)}</strong></section>
+      <section class="mobile-summary-grid mobile-insight-standard-stats"><article><span>Year income</span><strong>${formatMoney(yearIncome)}</strong></article><article><span>Year spending</span><strong>${formatMoney(yearSpending)}</strong></article><article><span>Transactions</span><strong>${yearTransactions.length}</strong></article><article><span>Savings rate</span><strong>${yearIncome > 0 ? Math.round((yearNet / yearIncome) * 100) : 0}%</strong></article></section>
+      <section class="mobile-summary-grid mobile-insight-stats">
+        <article><span>Avg. expense</span><strong>${formatMoney(averageExpense)}</strong></article>
+        <article><span>Largest expense</span><strong>${largestExpense ? formatMoney(largestExpense.amount) : "-"}</strong></article>
+        <article><span>Top merchant</span><strong>${topMerchant ? escapeHtml(topMerchant.name) : "-"}</strong></article>
+        <article><span>Merchant total</span><strong>${topMerchant ? formatMoney(topMerchant.total) : "-"}</strong></article>
+      </section>
+      <section class="mobile-page-card"><div class="mobile-section-title"><h3>Spending breakdown</h3><span>${yearTransactions.filter((tx) => tx.type !== "income").length} expenses</span></div>
+        ${insightGroups.map((group) => `
+          <details class="mobile-insight-group">
+            <summary><span>${escapeHtml(group.name)}</span><strong>${formatMoney(group.total)}</strong><svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></summary>
+            <div class="mobile-insight-group-body">
+              ${group.subcategories.map((subcategory) => `
+                <details class="mobile-insight-subcategory">
+                  <summary><div><strong>${escapeHtml(subcategory.name)}</strong><span>${subcategory.count} transactions</span></div><b>${formatMoney(subcategory.total)}</b><svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></summary>
+                  <div class="mobile-insight-merchant-list">
+                    ${subcategory.merchants.slice(0, 5).map((merchant) => `<div class="mobile-merchant-row"><span>${escapeHtml(merchant.name)} <small>×${merchant.count}</small></span><strong>${formatMoney(merchant.total)}</strong></div>`).join("")}
+                  </div>
+                </details>
+              `).join("")}
+            </div>
+          </details>
+        `).join("") || '<p class="mobile-empty">Add expense transactions to see category insights.</p>'}
+      </section>
+      <section class="mobile-page-card"><div class="mobile-section-title"><h3>Monthly snapshot</h3><button data-mobile-action="calendar">View calendar</button></div><p class="mobile-insight-copy">Use the calendar page to move through each month and review the transactions behind these totals.</p></section>
+      </div>
+    `;
+  } else if (mobilePage === "calendar") {
+    els.mobilePageView.innerHTML = `
+      <div class="mobile-month-switcher">
+        <div><p class="mobile-page-kicker">Calendar</p><strong>${escapeHtml(monthName)}</strong></div>
+        <button class="mobile-month-button" data-mobile-action="previous-month" aria-label="Previous month"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg></button>
+        <button class="mobile-month-button" data-mobile-action="next-month" aria-label="Next month" ${state.monthOffset === 0 ? "disabled" : ""}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      </div>
+      <div class="mobile-animated-content">
+      <section class="mobile-summary-grid"><article><span>Spending</span><strong>${els.monthSpendingValue.textContent}</strong></article><article><span>Net</span><strong>${els.monthNetValue.textContent}</strong></article></section>
+      <section class="mobile-page-card"><div class="mobile-section-title"><h3>Transactions</h3><span>${monthTransactions.length}</span></div>
+        ${renderMobileCalendarGroups(monthTransactions) || '<p class="mobile-empty">No transactions for this month.</p>'}
+      </section>
+      </div>
+    `;
+  } else {
+    const settingsView = mobileSettingsView;
+    const settingsContent = settingsView === "root" ? `
+      <button data-mobile-action="settings-general">General <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="settings-data">Data <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="settings-travel">Travel <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="open-savings">Savings <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button class="mobile-settings-logout" data-mobile-action="logout">Log out <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+    ` : settingsView === "general" ? `
+      <button class="mobile-settings-back" data-mobile-action="settings-back"><svg class="mobile-menu-chevron mobile-menu-chevron-back" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg> General</button>
+      <button data-mobile-action="open-settings">Category Management <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button class="mobile-settings-disabled" type="button" disabled>Link Financials <small>Coming soon</small></button>
+      ${state.currentUser?.isAdmin ? `
+        <button data-mobile-action="open-user-management">User Management <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      ` : ""}
+    ` : settingsView === "data" ? `
+      <button class="mobile-settings-back" data-mobile-action="settings-back"><svg class="mobile-menu-chevron mobile-menu-chevron-back" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg> Data</button>
+      <button data-mobile-action="import-data">Import data <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="export-data">Export data <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="backup-data">Backup data <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+    ` : `
+      <button class="mobile-settings-back" data-mobile-action="settings-back"><svg class="mobile-menu-chevron mobile-menu-chevron-back" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7"/></svg> Travel</button>
+      <button data-mobile-action="create-trip">Create new trip <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="open-trips">Trip management <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button data-mobile-action="trip-summary">Trip summary <svg class="mobile-menu-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 5 7 7-7 7"/></svg></button>
+    `;
+    els.mobilePageView.innerHTML = `
+      <header class="mobile-page-header"><div><p class="mobile-page-kicker">Pulse</p><h2>Settings</h2></div></header>
+      <section class="mobile-page-card mobile-settings-list mobile-settings-panel ${settingsView !== "root" ? "is-subview" : ""}">${settingsContent}</section>
+    `;
+  }
+
+  if (mobilePageTransition) {
+    const animatedContent = els.mobilePageView.querySelector(".mobile-animated-content") || els.mobilePageView;
+    animatedContent.classList.remove("mobile-swipe-forward", "mobile-swipe-back");
+    void animatedContent.offsetWidth;
+    animatedContent.classList.add(mobilePageTransition === "back" ? "mobile-swipe-back" : "mobile-swipe-forward");
+    mobilePageTransition = "";
+  }
+
+  els.mobilePageView.querySelectorAll("[data-mobile-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.mobileAction;
+      button.classList.remove("is-pressed");
+      void button.offsetWidth;
+      button.classList.add("is-pressed");
+      window.setTimeout(() => button.classList.remove("is-pressed"), 220);
+      if (action === "previous-month") {
+        state.monthOffset += 1;
+        mobilePageTransition = "back";
+      }
+      if (action === "next-month") {
+        state.monthOffset = Math.max(0, state.monthOffset - 1);
+        mobilePageTransition = "forward";
+      }
+      if (["previous-month", "next-month"].includes(action)) render();
+      if (action === "previous-year") {
+        state.insightsYearOffset += 1;
+        mobilePageTransition = "back";
+        renderMobilePage();
+      }
+      if (action === "next-year" && state.insightsYearOffset > 0) {
+        state.insightsYearOffset -= 1;
+        mobilePageTransition = "forward";
+        renderMobilePage();
+      }
+      if (action === "search") openGlobalSearchModal();
+      if (action === "calendar") setMobilePage("calendar");
+      if (action === "open-settings") openSettingsModal();
+      if (action === "open-savings") openSavingsModal();
+      if (action === "open-trips") openManageTripsModal();
+      if (action === "open-user-management" && state.currentUser?.isAdmin) openUserManagementModal();
+      if (action === "settings-general" || action === "settings-data" || action === "settings-travel") {
+        mobileSettingsView = action.replace("settings-", "");
+        renderMobilePage();
+      }
+      if (action === "settings-back") {
+        mobileSettingsView = "root";
+        renderMobilePage();
+      }
+      if (action === "create-trip") onCreateTrip();
+      if (action === "trip-summary") openTripSummaryModal();
+      if (action === "import-data") openImportFilePicker();
+      if (action === "export-data") exportToCsv();
+      if (action === "backup-data") exportBackupCsv();
+      if (action === "logout") els.logoutButton?.click();
+    });
+  });
 }
 
 function toggleMobileNav() {
@@ -2572,8 +2931,6 @@ function openAppDialog(config) {
   if (appDialogMode === "prompt") {
     els.appDialogInputWrap.hidden = false;
     els.appDialogInput.value = config.initialValue || "";
-    els.appDialogInput.focus();
-    els.appDialogInput.select();
   } else {
     els.appDialogInputWrap.hidden = true;
     els.appDialogInput.value = "";
@@ -2581,6 +2938,10 @@ function openAppDialog(config) {
   }
 
   els.appDialogModal.hidden = false;
+  if (appDialogMode === "prompt") {
+    els.appDialogInput.focus();
+    els.appDialogInput.select();
+  }
 
   return new Promise((resolve) => {
     appDialogResolver = resolve;
@@ -3483,6 +3844,7 @@ function render() {
   renderMonthLog(monthTransactions);
   renderTripSummary();
   renderSavingsInsights();
+  renderMobilePage();
 }
 
 function getYearToDateTransactions(referenceDate) {
