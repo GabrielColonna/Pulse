@@ -64,7 +64,7 @@
     button.classList.add("is-loading");
     showMessage("Verifying your secure session…", false);
     try {
-      const response = await fetch("/api/login", {
+      const response = await window.PulseApi.fetch("/api/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -78,7 +78,9 @@
       }
       showMessage("Access confirmed. Opening your dashboard…", false);
       document.body.classList.add("login-success");
-      window.setTimeout(() => window.location.replace("/dashboard"), 900);
+      window.setTimeout(() => {
+        window.location.replace(window.PulseApi.isNative ? "index.html" : "/dashboard");
+      }, 900);
     } catch {
       showMessage("Unable to connect. Check your connection and try again.", true);
     } finally {

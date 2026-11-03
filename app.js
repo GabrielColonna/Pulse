@@ -367,11 +367,11 @@ async function init() {
   try {
     response = await apiFetch("/api/me");
   } catch {
-    window.location.replace("/login.html");
+    window.location.replace(window.PulseApi.isNative ? "login.html" : "/login.html");
     return;
   }
   if (!response.ok) {
-    window.location.replace("/login.html");
+    window.location.replace(window.PulseApi.isNative ? "login.html" : "/login.html");
     return;
   }
 
@@ -775,7 +775,7 @@ function wireEvents() {
       if (!response.ok) {
         throw new Error("Logout failed");
       }
-      window.location.replace("/login.html");
+      window.location.replace(window.PulseApi.isNative ? "login.html" : "/login.html");
     } catch (error) {
       if (els.logoutButton) {
         els.logoutButton.disabled = false;

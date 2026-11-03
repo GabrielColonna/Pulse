@@ -36,6 +36,37 @@ in the user's hands.
 4. Open:
   - `http://localhost:4100`
 
+## iOS Capacitor App
+
+The repository uses a static frontend rather than a bundler. `npm run build:ios`
+copies the frontend into `www/` and injects the API host from `PULSE_API_BASE`.
+The backend remains external and is never bundled into the native app.
+
+```bash
+PULSE_API_BASE=https://your-backend-domain.com npm run build:ios
+npx cap sync ios
+npx cap open ios
+```
+
+For local web development, omit `PULSE_API_BASE` so the frontend continues to
+use same-origin requests. For an iOS build, set it to the HTTPS production API
+origin without a trailing slash.
+
+The remote backend's `CLIENT_ORIGINS` must include `capacitor://localhost` and
+the production web frontend origin. Because the app uses credentialed requests,
+the backend must echo the requesting origin in `Access-Control-Allow-Origin`,
+send `Access-Control-Allow-Credentials: true`, allow `GET,POST,PUT,DELETE,OPTIONS`,
+and allow the `Content-Type` and `Authorization` request headers. Do not use
+`Access-Control-Allow-Origin: *` with cookies.
+
+Potential follow-up native plugins:
+
+- `@capacitor/status-bar` for status bar appearance and contrast.
+- `@capacitor/splash-screen` for launch-screen behavior.
+- `@capacitor/preferences` for durable, native-backed preferences.
+- `@capacitor/app` for lifecycle and deep-link handling.
+- `@capacitor/browser` for external web authentication flows.
+
 The server uses PostgreSQL through `DATABASE_URL`. If `DATABASE_URL` is missing, the PostgreSQL driver attempts its local default connection instead, which is a different database from Supabase.
 
 ## Environment Variables
