@@ -194,6 +194,7 @@ const els = {
   mobileQuickAddButton: document.getElementById("mobileQuickAddButton"),
   mobileCalendarButton: document.getElementById("mobileCalendarButton"),
   mobileSettingsButton: document.getElementById("mobileSettingsButton"),
+  mobileBottomNav: document.getElementById("mobileBottomNav"),
   mobilePageView: document.getElementById("mobilePageView"),
   closeQuickAddButton: document.getElementById("closeQuickAddButton"),
   workspaceTools: document.querySelector(".workspace-tools"),
@@ -1051,6 +1052,7 @@ function renderMobileTransactionRow(transaction) {
     <div class="mobile-transaction-meta">
       ${tripName ? `<span class="mobile-trip-badge" title="Trip: ${escapeHtml(tripName)}" aria-label="Trip: ${escapeHtml(tripName)}">✈ ${escapeHtml(tripName)}</span>` : ""}
       <b class="${transaction.type === "income" ? "positive" : ""}">${transaction.type === "income" ? "+" : "-"}${formatMoney(transaction.amount)}</b>
+      <button class="mobile-transaction-edit" type="button" data-mobile-action="edit-transaction" data-id="${escapeHtml(transaction.id)}">Edit</button>
     </div>
   </div>`;
 }
@@ -1345,6 +1347,13 @@ function renderMobilePage() {
         renderMobilePage();
       }
       if (action === "search") openGlobalSearchModal();
+      if (action === "edit-transaction") {
+        const transaction = state.transactions.find((tx) => tx.id === button.dataset.id);
+        if (transaction) {
+          enterEditMode(transaction);
+          focusQuickAddWidget();
+        }
+      }
       if (action === "calendar") setMobilePage("calendar");
       if (action === "open-settings") openSettingsModal();
       if (action === "open-savings") openSavingsModal();
@@ -1391,6 +1400,7 @@ function setQuickAddOpen(isOpen) {
 
   els.appShell.classList.toggle("quick-add-open", isOpen);
   updateMobileOverlayState();
+  syncMobileBottomNavVisibility();
 }
 
 function openQuickAddModal() {
@@ -1788,7 +1798,19 @@ async function refreshCurrentUser() {
 }
 
 let onboardingModel = null;
-let onboardingActiveType = "expense";
+let onboardingActiveType = "income";
+let onboardingStep = "income";
+
+function syncMobileBottomNavVisibility() {
+  if (!els.mobileBottomNav) {
+    return;
+  }
+
+  const hiddenByScreen = els.onboardingScreen && !els.onboardingScreen.hidden;
+  const hiddenByTour = els.dashboardTour && !els.dashboardTour.hidden;
+  const hiddenByQuickAdd = els.appShell?.classList.contains("quick-add-open");
+  els.mobileBottomNav.classList.toggle("is-hidden", Boolean(hiddenByScreen || hiddenByTour || hiddenByQuickAdd));
+}
 
 function openOnboardingScreen() {
   if (!els.onboardingScreen) {
@@ -1803,9 +1825,11 @@ function openOnboardingScreen() {
       }
     }
   }
-  onboardingActiveType = "expense";
+  onboardingActiveType = "income";
+  onboardingStep = "income";
   els.appShell.hidden = true;
   els.onboardingScreen.hidden = false;
+  syncMobileBottomNavVisibility();
   renderOnboardingBuilder();
 }
 
@@ -1818,6 +1842,7 @@ function renderOnboardingBuilder() {
     const active = button.dataset.onboardingType === onboardingActiveType;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", active ? "true" : "false");
+    button.disabled = button.dataset.onboardingType !== onboardingActiveType;
   });
   els.onboardingBuilder.innerHTML = (onboardingModel[onboardingActiveType] || []).map((group, groupIndex) => `
     <article class="onboarding-builder-card">
@@ -1847,7 +1872,14 @@ function renderOnboardingBuilder() {
   `).join("") || '<p class="onboarding-empty-state">No parent categories yet. Add one below to get started.</p>';
 
   if (els.onboardingScreenStep) {
-    els.onboardingScreenStep.textContent = `${toTitleCase(onboardingActiveType)} setup`;
+    els.onboardingScreenStep.textContent = onboardingStep === "income"
+      ? "Income setup"
+      : "Expense setup";
+  }
+  if (els.finishOnboardingSetupButton) {
+    els.finishOnboardingSetupButton.textContent = onboardingStep === "income"
+      ? "Next: Expenses"
+      : "Save & Enter Pulse";
   }
 }
 
@@ -1897,8 +1929,30 @@ async function finishOnboardingSetup() {
   }
 
   const selectedModel = normalizeCategoryModelShape(onboardingModel || {});
+  const missingField = findFirstInvalidOnboardingField(onboardingActiveType);
+  if (missingField) {
+    setOnboardingSetupMessage(`Add a name for this ${onboardingActiveType} category.`, true);
+    focusOnboardingField(missingField);
+    return;
+  }
+
+  if (onboardingStep === "income") {
+    onboardingStep = "expense";
+    onboardingActiveType = "expense";
+    setOnboardingSetupMessage("", false);
+    renderOnboardingBuilder();
+    requestAnimationFrame(() => els.onboardingBuilder?.querySelector("input")?.focus());
+    return;
+  }
+
   if (!isValidCategoryModel(selectedModel)) {
     setOnboardingSetupMessage("Add at least one named parent and one named subcategory for both Expenses and Income.", true);
+    onboardingActiveType = selectedModel.income.some((group) => group.name && group.subcategories.some((sub) => sub.name))
+      ? "expense"
+      : "income";
+    onboardingStep = onboardingActiveType;
+    renderOnboardingBuilder();
+    focusOnboardingField(findFirstInvalidOnboardingField(onboardingActiveType));
     return;
   }
 
@@ -1917,6 +1971,7 @@ async function finishOnboardingSetup() {
     state.currentUser.needsOnboarding = false;
     els.onboardingScreen.hidden = true;
     els.appShell.hidden = false;
+    syncMobileBottomNavVisibility();
     populateParentCategories(els.entryType?.value || "expense");
     suggestCategoryFromDescription();
     setOnboardingSetupMessage("", false);
@@ -1934,6 +1989,39 @@ function setOnboardingSetupMessage(message, isError) {
   }
   els.onboardingSetupMessage.textContent = message;
   els.onboardingSetupMessage.style.color = isError ? "#ff4766" : "#86ffb8";
+}
+
+function findFirstInvalidOnboardingField(type) {
+  const groups = onboardingModel?.[type] || [];
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex];
+    if (!String(group.name || "").trim()) {
+      return `[data-onboarding-parent-name="${groupIndex}"]`;
+    }
+    if (!(group.subcategories || []).length) {
+      return `[data-onboarding-action="add-subcategory"][data-group-index="${groupIndex}"]`;
+    }
+    for (let subIndex = 0; subIndex < (group.subcategories || []).length; subIndex += 1) {
+      if (!String(group.subcategories[subIndex].name || "").trim()) {
+        return `[data-onboarding-sub-name="${groupIndex}:${subIndex}"]`;
+      }
+    }
+  }
+  return groups.length ? null : "#addOnboardingParentButton";
+}
+
+function focusOnboardingField(selector) {
+  if (!selector || !els.onboardingBuilder) {
+    return;
+  }
+  requestAnimationFrame(() => {
+    const field = els.onboardingBuilder.querySelector(selector) || document.querySelector(selector);
+    if (!field) {
+      return;
+    }
+    field.scrollIntoView({ behavior: "smooth", block: "center" });
+    field.focus();
+  });
 }
 
 const dashboardTourSteps = [
@@ -1964,6 +2052,7 @@ function openDashboardTour() {
   dashboardTourStepIndex = 0;
   renderDashboardTourStep();
   els.dashboardTour.hidden = false;
+  syncMobileBottomNavVisibility();
 }
 
 function renderDashboardTourStep() {
@@ -1996,6 +2085,7 @@ function closeDashboardTour() {
   if (els.dashboardTour) {
     els.dashboardTour.hidden = true;
   }
+  syncMobileBottomNavVisibility();
 }
 
 function onOpenSettings() {

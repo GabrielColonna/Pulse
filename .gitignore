@@ -1,5 +1,6 @@
 node_modules/
 uploads/
+test-results/
 *.log
 budget.db
 budget.db-journal

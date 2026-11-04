@@ -69,13 +69,13 @@
         </div>
         <p class="onboarding-setup-help">Parent categories are the big buckets. Subcategories are where individual transactions will land. Start with the essentials now; you can teach Pulse keywords later from Settings.</p>
         <div class="onboarding-type-tabs" role="tablist" aria-label="Category type">
-          <button class="onboarding-type-tab is-active" type="button" data-onboarding-type="expense" role="tab" aria-selected="true">Expenses</button>
-          <button class="onboarding-type-tab" type="button" data-onboarding-type="income" role="tab" aria-selected="false">Income</button>
+          <button class="onboarding-type-tab" type="button" data-onboarding-type="income" role="tab" aria-selected="true">Income</button>
+          <button class="onboarding-type-tab" type="button" data-onboarding-type="expense" role="tab" aria-selected="false">Expenses</button>
         </div>
         <div id="onboardingBuilder" class="onboarding-builder"></div>
         <div class="onboarding-setup-actions">
           <button id="addOnboardingParentButton" class="ghost-btn" type="button">+ Add Parent Category</button>
-          <button id="finishOnboardingSetupButton" class="primary-btn" type="button">Save &amp; Enter Pulse</button>
+          <button id="finishOnboardingSetupButton" class="primary-btn" type="button">Next: Expenses</button>
         </div>
         <p id="onboardingSetupMessage" class="form-message" role="status" aria-live="polite"></p>
       </section>
@@ -358,7 +358,7 @@
     <section id="mobilePageView" class="mobile-page-view" aria-live="polite"></section>
   </div>
 
-  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+  <nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Mobile navigation">
     <button id="mobileHomeButton" class="mobile-bottom-nav-item is-active" type="button">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>
       <span>Home</span>

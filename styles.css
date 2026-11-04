@@ -3147,6 +3147,10 @@ select:focus {
   display: none;
 }
 
+.mobile-bottom-nav.is-hidden {
+  display: none !important;
+}
+
 .mobile-page-view {
   display: none;
 }
@@ -3927,6 +3931,20 @@ select:focus {
 
   .mobile-transaction-row > b.positive {
     color: #35ff86;
+  }
+
+  .mobile-transaction-edit {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid rgba(211, 107, 255, 0.42);
+    border-radius: 9px;
+    background: rgba(211, 107, 255, 0.12);
+    color: #f2eaff;
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 700;
   }
 
   .mobile-settings-list {
