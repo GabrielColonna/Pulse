@@ -119,6 +119,18 @@ test("mobile Quick Add hides the bottom navigation and restores it on close", as
   await expect(nav).not.toHaveClass(/is-hidden/);
 });
 
+test("Quick Add amount shifts digits around a fixed decimal", async ({ page }) => {
+  await mockDashboardApi(page, { needsOnboarding: false });
+  await page.goto("/dashboard");
+  await unlockPrivacyGate(page, { needsOnboarding: false });
+
+  const amount = page.locator("#amount");
+  await expect(amount).toHaveValue("0.00");
+  await amount.fill("");
+  await amount.pressSequentially("8430");
+  await expect(amount).toHaveValue("84.30");
+});
+
 test("mobile recent transactions can open an existing transaction for editing", async ({ page }) => {
   await mockDashboardApi(page, { needsOnboarding: false });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -129,5 +141,5 @@ test("mobile recent transactions can open an existing transaction for editing", 
   await expect(page.locator(".app-shell")).toHaveClass(/quick-add-open/);
   await expect(page.locator("#submitButton")).toHaveText("Update Transaction");
   await expect(page.locator("#description")).toHaveValue("Test groceries");
-  await expect(page.locator("#amount")).toHaveValue("25");
+  await expect(page.locator("#amount")).toHaveValue("25.00");
 });

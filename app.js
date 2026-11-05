@@ -682,6 +682,7 @@ async function initializeDashboard() {
   hydrateSidebarState();
   await hydrateCategoryModel();
   hydrateSavingsGoal();
+  els.amount.value = "0.00";
   setDefaultDate();
   populateParentCategories("expense");
   if (els.tripAccordion) {
@@ -892,6 +893,7 @@ function wireEvents() {
   });
 
   els.description.addEventListener("input", suggestCategoryFromDescription);
+  els.amount.addEventListener("input", onAmountInput);
   els.entryType.addEventListener("change", onTypeChange);
   els.parentCategorySelect.addEventListener("change", onParentCategoryChange);
   els.recurrenceFrequency.addEventListener("change", onRecurrenceFrequencyChanged);
@@ -3117,6 +3119,20 @@ function setDefaultDate() {
   els.entryDate.value = formatDateInput(today);
 }
 
+function formatAmountInputValue(value) {
+  const digits = String(value || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  const paddedDigits = digits.padStart(3, "0");
+  const wholePart = paddedDigits.slice(0, -2) || "0";
+  const decimalPart = paddedDigits.slice(-2);
+  return `${wholePart}.${decimalPart}`;
+}
+
+function onAmountInput() {
+  const formattedValue = formatAmountInputValue(els.amount.value);
+  els.amount.value = formattedValue;
+  els.amount.setSelectionRange(formattedValue.length, formattedValue.length);
+}
+
 function getGroups(type) {
   return CATEGORY_MODEL[type] || [];
 }
@@ -3375,7 +3391,7 @@ async function onSubmitEntry(event) {
 function enterEditMode(transaction) {
   state.editingId = transaction.id;
   els.description.value = transaction.description;
-  els.amount.value = Number(transaction.amount);
+  els.amount.value = formatAmountInputValue(Math.round(Number(transaction.amount) * 100));
   els.entryDate.value = transaction.date;
   els.entryType.value = transaction.type;
   populateParentCategories(transaction.type, normalizeLegacyParentCategory(transaction.parentCategory) || classifyCategory(transaction.description, transaction.type).parentCategory);
@@ -3407,6 +3423,7 @@ function exitEditMode(options = {}) {
 
 function resetForm() {
   els.form.reset();
+  els.amount.value = "0.00";
   setDefaultDate();
   els.entryType.value = "expense";
   populateParentCategories("expense", "Expenses");
